@@ -3,23 +3,70 @@
 #include <intrin.h>
 
 namespace kstd {
+
+	
+#pragma warning(disable : 4996)
 	// h disassambly engine
 	namespace hde_inner {
 		/* __cdecl */
+		typedef INT8   int8_t;
+		typedef INT16  int16_t;
+		typedef INT32  int32_t;
+		typedef INT64  int64_t;
+		typedef UINT8  uint8_t;
+		typedef UINT16 uint16_t;
+		typedef UINT32 uint32_t;
+		typedef UINT64 uint64_t;
+
+#pragma pack(push,1)
+		typedef struct {
+			uint8_t len;
+			uint8_t p_rep;
+			uint8_t p_lock;
+			uint8_t p_seg;
+			uint8_t p_66;
+			uint8_t p_67;
+			uint8_t rex;
+			uint8_t rex_w;
+			uint8_t rex_r;
+			uint8_t rex_x;
+			uint8_t rex_b;
+			uint8_t opcode;
+			uint8_t opcode2;
+			uint8_t modrm;
+			uint8_t modrm_mod;
+			uint8_t modrm_reg;
+			uint8_t modrm_rm;
+			uint8_t sib;
+			uint8_t sib_scale;
+			uint8_t sib_index;
+			uint8_t sib_base;
+			union {
+				uint8_t imm8;
+				uint16_t imm16;
+				uint32_t imm32;
+				uint64_t imm64;
+			} imm;
+			union {
+				uint8_t disp8;
+				uint16_t disp16;
+				uint32_t disp32;
+			} disp;
+			uint32_t flags;
+		} hde64s;
+#pragma pack(pop)
 		unsigned int hde64_disasm(const void* code, hde64s* hs);
+
+
 
 	}
 
-
 	class InlineHookManager {
-	private:
-		inline static constexpr int cover_size = 14/* inline hook cover 14 bytes*/;
-
 		typedef struct HookInfo {
 			LIST_ENTRY links;
 			void* hook_addr;
 			void* trampline;
-			unsigned char originalBytes[cover_size];
+			unsigned char originalBytes[14];
 		}*pHookInfo;
 
 		typedef struct IpiContext {
@@ -29,7 +76,12 @@ namespace kstd {
 			volatile LONG done_cpu_count;
 		}*pIpiContext;
 
+
+		inline static constexpr int cover_size = 14/* inline hook cover 14 bytes*/;
 	public:
+
+	public:
+		
 		InlineHookManager() = delete;
 		~InlineHookManager() = delete;
 		static InlineHookManager* getInstance();
@@ -37,21 +89,24 @@ namespace kstd {
 		static NTSTATUS inlinehook(void* target_addr, void** hk_addr);
 		static NTSTATUS destory();
 		static NTSTATUS remove(void* target_addr);
-		static NTSTATUS remove(pHookInfo hook_info);
+		
 	private:
+		static NTSTATUS remove(pHookInfo hook_info);
 		static void* mapAddrByMdl(void* addr, size_t map_size, PMDL* mdl);
 		static void unmapAddrByMdl(PMDL mdl);
 		static pHookInfo getHookInfoByAddr(void* target_addr);
-		static ULONG_PTR ipiCallback(void* context);
+		static ULONG_PTR ipiCallback(ULONG_PTR context);
 	private:
 		inline /*must define as inline*/ static InlineHookManager* __instance;
 		inline static ULONG __cpu_count;
 		inline static KSPIN_LOCK __spinlock;
 		inline static LIST_ENTRY __head;
-		inline static constexpr unsigned pool_tag = 'hkmg';
+		inline static constexpr unsigned pool_tag = 0;
 		inline static unsigned char __jmpcode[14] = { 0xff,0x25,0x00,0x00,0x00,0x00,0,0,0,0,0,0,0,0 };
+		inline static bool __inited;
+		inline static  void* __alloc_old;
+		inline static void* __alloc_new;
 	};
-
 
 	namespace hde_inner {
 
@@ -177,55 +232,6 @@ namespace kstd {
  *
  */
  // Integer types for HDE.
-		typedef INT8   int8_t;
-		typedef INT16  int16_t;
-		typedef INT32  int32_t;
-		typedef INT64  int64_t;
-		typedef UINT8  uint8_t;
-		typedef UINT16 uint16_t;
-		typedef UINT32 uint32_t;
-		typedef UINT64 uint64_t;
-#pragma pack(push,1)
-
-		typedef struct {
-			uint8_t len;
-			uint8_t p_rep;
-			uint8_t p_lock;
-			uint8_t p_seg;
-			uint8_t p_66;
-			uint8_t p_67;
-			uint8_t rex;
-			uint8_t rex_w;
-			uint8_t rex_r;
-			uint8_t rex_x;
-			uint8_t rex_b;
-			uint8_t opcode;
-			uint8_t opcode2;
-			uint8_t modrm;
-			uint8_t modrm_mod;
-			uint8_t modrm_reg;
-			uint8_t modrm_rm;
-			uint8_t sib;
-			uint8_t sib_scale;
-			uint8_t sib_index;
-			uint8_t sib_base;
-			union {
-				uint8_t imm8;
-				uint16_t imm16;
-				uint32_t imm32;
-				uint64_t imm64;
-			} imm;
-			union {
-				uint8_t disp8;
-				uint16_t disp16;
-				uint32_t disp32;
-			} disp;
-			uint32_t flags;
-		} hde64s;
-
-#pragma pack(pop)
-
-
 #if defined(_M_X64) || defined(__x86_64__)
 #pragma warning(push, 0)
 #pragma warning(disable: 4701 4706 26451)
@@ -561,17 +567,18 @@ namespace kstd {
 
 			return (unsigned int)hs->len;
 		}
-
 #pragma warning(pop)
 #endif // defined(_M_X64) || defined(__x86_64__)
+
 	}
 
 	inline InlineHookManager* InlineHookManager::getInstance()
 	{
 		if (__instance == nullptr) {
-			__instance = reinterpret_cast<InlineHookManager*>(ExAllocatePoolZero(NonPagedPool, sizeof InlineHookManager, InlineHookManager::pool_tag));
-		}
 
+			__instance = reinterpret_cast<InlineHookManager*>(ExAllocatePoolWithTag(NonPagedPoolNx, sizeof InlineHookManager, InlineHookManager::pool_tag));
+		}
+		
 		return __instance;
 	}
 
@@ -579,15 +586,23 @@ namespace kstd {
 	{
 		auto status = STATUS_SUCCESS;
 
-		if (__instance != nullptr) {
+		if (__instance == nullptr) {
 			status = STATUS_UNSUCCESSFUL;
 			return status;
+		}
+
+		if (__inited == true) {
+			status = STATUS_SUCCESS;
+			return status;/*if has inited,return success directly*/
 		}
 
 		InitializeListHead(&__head);
 		KeInitializeSpinLock(&__spinlock);
 
 		__cpu_count = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
+
+
+		__inited = true;
 
 		return status;
 	}
@@ -597,37 +612,138 @@ namespace kstd {
 		PMDL mdl = nullptr;
 		auto status = STATUS_SUCCESS;
 		pIpiContext ipi_context = nullptr;
-		void* modify_content = nullptr;
+		unsigned char* modify_content = nullptr;
 		void* tramp_line = nullptr;
-		
+		ULONG copy_bytes_count = 0;
+		hde_inner::hde64s hde{};
+		unsigned char org_bytes[cover_size]{};
+		KIRQL irql{};
+		pHookInfo entry = nullptr;/* if failed  clean this */
+
 		if (target_addr == nullptr || hk_addr == nullptr || *hk_addr == nullptr) {
 			return STATUS_INVALID_PARAMETER;
+		}
+		
+		if (__inited != true) {
+			status = STATUS_ACPI_NOT_INITIALIZED;
+			return status;
 		}
 		
 
 		do {
 
+
 			//map hook addr to write 
-			auto modify_buf=mapAddrByMdl(target_addr, cover_size, &mdl);
+			auto modify_buf = mapAddrByMdl(target_addr, cover_size, &mdl);
 			if (modify_buf == nullptr) {
-				status=STATUS_INSUFFICIENT_RESOURCES;
+				status = STATUS_INSUFFICIENT_RESOURCES;
 				break;
 			}
 
+
+
 			//then exallcoatepool for trampline
-			tramp_line = ExAllocatePoolZero(NonPagedPool, PAGE_SIZE, pool_tag);
+			tramp_line = ExAllocatePoolWithTag(NonPagedPoolExecute, PAGE_SIZE, pool_tag);
 			if (tramp_line == nullptr) {
 				status = STATUS_INSUFFICIENT_RESOURCES;
 				break;
 			}
 
+
 			//calcuate how many bytes copied to trampline and copy to the page
+			while (copy_bytes_count < cover_size) {
 
+				auto inst_len=hde_inner::hde64_disasm(reinterpret_cast<const void*>((UINT_PTR)target_addr + copy_bytes_count), &hde);
+				if (inst_len == 0) break;
+				copy_bytes_count += inst_len;
+			}
+			if (copy_bytes_count < cover_size) {
+				status = STATUS_INSTRUCTION_MISALIGNMENT;
+				break;
+			}
+
+
+			//set modify content(copy jmp code to this)
+			modify_content = reinterpret_cast<unsigned char*>(ExAllocatePoolWithTag(NonPagedPoolNx, cover_size, pool_tag));
+			if (modify_content == nullptr) {
+				status = STATUS_INSUFFICIENT_RESOURCES;
+				break;
+			}
+
+
+			::memcpy(modify_content, __jmpcode, sizeof __jmpcode);
+			*((void**)(modify_content + 6)) = *hk_addr;
+
+
+			//set trampline content
+			::memcpy(tramp_line, target_addr, copy_bytes_count);
+			::memcpy((unsigned char*)tramp_line + copy_bytes_count, __jmpcode, sizeof __jmpcode);
+			RtlFillMemoryUlonglong((unsigned char*)tramp_line + copy_bytes_count + 6, 8, (UINT_PTR)target_addr + copy_bytes_count);
+
+			//save org bytes
+			::memcpy(org_bytes, target_addr, sizeof org_bytes);
+
+			//alloate entry
+			entry = reinterpret_cast<pHookInfo>(ExAllocatePoolWithTag(NonPagedPoolNx, sizeof(HookInfo), pool_tag));
+			if (entry == nullptr) {
+				status = STATUS_INSUFFICIENT_RESOURCES;
+				break;
+			}
+
+			
 			//alloate modify_content buffer, and alloate ipi_context,then tragger ipi to sync the write
+			ipi_context = reinterpret_cast<pIpiContext>(ExAllocatePoolWithTag(NonPagedPoolNx, sizeof(IpiContext), pool_tag));
+			if (!ipi_context) {
+				status = STATUS_INSUFFICIENT_RESOURCES;
+				break;
+			}
 
-			//finally,alloate entry, and insert it to the list at tail
+			
+			ipi_context->done_cpu_count = 0;
+			ipi_context->modify_buf = (unsigned char*)modify_buf;
+			ipi_context->modify_size = cover_size;
+			ipi_context->modify_content = modify_content;
+			
+			//generate ipi 
+			KeIpiGenericCall(ipiCallback, (ULONG_PTR)(ipi_context));
+
+
+			//finally insert the entry to the list tail,there is no possible be failed
+			*hk_addr = tramp_line;
+			entry->hook_addr = target_addr;
+			::memcpy(&entry->originalBytes, org_bytes, sizeof org_bytes);
+
+			KeAcquireSpinLock(&__spinlock, &irql);
+			InsertTailList(&__head,&entry->links);
+			KeReleaseSpinLock(&__spinlock, irql);
 
 		} while (false);
+
+		//clean up;
+
+
+		if (mdl != nullptr) {
+			unmapAddrByMdl(mdl);
+		}
+
+
+		if (ipi_context != nullptr) {
+			ExFreePool(ipi_context);
+		}
+
+		if (modify_content != nullptr) {
+			ExFreePool(modify_content);
+		}
+
+		if (!NT_SUCCESS(status)) {
+			if (entry != nullptr) {
+				ExFreePool(entry);
+			}
+			if (tramp_line != nullptr) {
+				ExFreePool(tramp_line);
+			}
+		}
+
 
 		return status;
 	}
@@ -637,59 +753,153 @@ namespace kstd {
 		auto status = STATUS_SUCCESS;
 		auto irql = KIRQL{};
 
-		if (__instance == nullptr) {
+		if (__instance == nullptr || __inited == false) {
 			status = STATUS_ACPI_NOT_INITIALIZED;
 			return status;
 		}
 
 		KeAcquireSpinLock(&__spinlock, &irql);
-		// 开始遍历链表,进行回复
+
+		//traverse the list and remove it
 		while (!IsListEmpty(&__head)) {
 			auto link = RemoveHeadList(&__head);
-			pHookInfo entry = CONTAINING_RECORD(link, InlineHookManager::HookInfo, links);
+			pHookInfo entry = CONTAINING_RECORD(link, HookInfo, links);
 
 			InlineHookManager::remove(entry);
-			ExFreePoolWithTag(entry, pool_tag);
 		}
 
 		KeReleaseSpinLock(&__spinlock, irql);
+
+		//clean instance
+		if (__instance) {
+			ExFreePool(__instance);
+			__instance = nullptr;
+		}
+
+		__inited = false;
 		return status;
 	}
 
+	//
 	inline NTSTATUS InlineHookManager::remove(void* target_addr)
 	{
-		return remove(getHookInfoByAddr(target_addr));
+		auto status = STATUS_ENTRYPOINT_NOT_FOUND;
+
+		if (__inited == false) {
+			status = STATUS_ACPI_NOT_INITIALIZED;
+			return status;
+		}
+
+		auto irql = KIRQL{};
+		
+		auto hook_info = getHookInfoByAddr(target_addr);
+
+
+		if (hook_info) {
+			KeAcquireSpinLock(&__spinlock, &irql);
+
+			RemoveEntryList(&hook_info->links);
+
+			KeReleaseSpinLock(&__spinlock, irql);
+
+			remove(hook_info);
+
+			status = STATUS_SUCCESS;
+		}
+
+		return status;
 	}
 
 	//before call this func,makesure that you have unlinked the entry from the list;
+	//this is a private func,user need to use remove(void*)
 	inline NTSTATUS InlineHookManager::remove(pHookInfo hook_info)
 	{
 		auto status = STATUS_SUCCESS;
+		IpiContext* ipi_context = nullptr;
+		unsigned char* modify_content = nullptr;
+		PMDL mdl = nullptr;
+		if (__inited == false) {
+			status = STATUS_ACPI_NOT_INITIALIZED;
+			return status;
+		}
 
 		if (hook_info == nullptr) {
 			status = STATUS_HASH_NOT_PRESENT;
 			return status;
 		}
 
-		//call ipi to rsunme hook 
+		
+		do {
+			//alloc memory for ipi_context 
+			ipi_context = reinterpret_cast<IpiContext*>(ExAllocatePoolWithTag(NonPagedPoolNx, sizeof(IpiContext), pool_tag));
 
-		//then clean this entry and clean the mdl;
+			if (ipi_context == nullptr) {
+				status = STATUS_INSUFFICIENT_RESOURCES;
+				break;
+			}
+
+
+			//alloc memory for moidfy_content
+			modify_content = reinterpret_cast<unsigned char*>(ExAllocatePoolWithTag(NonPagedPoolNx, cover_size, pool_tag));
+			if (modify_content == nullptr) {
+				status = STATUS_INSUFFICIENT_RESOURCES;
+				break;
+			}
+			//set modify content
+			::memcpy(modify_content,hook_info->originalBytes ,cover_size);
+
+			//map addr by mdl
+			auto modify_buf = mapAddrByMdl(hook_info->hook_addr, cover_size, &mdl);
+			if (modify_buf == nullptr) {
+				status = STATUS_UNSUCCESSFUL;
+				break;
+			}
+
+			
+			//fill ipi_context and generate an ipi
+			ipi_context->done_cpu_count = 0;
+			ipi_context->modify_content = modify_content;
+			ipi_context->modify_size = cover_size;
+			ipi_context->modify_buf = (unsigned char*)modify_buf;
+
+			KeIpiGenericCall(ipiCallback, (ULONG_PTR)ipi_context);
+
+			//do not need to unlink the entry from the list
+			//clean mem in innner
+			ExFreePool(hook_info);
+
+		} while (false);
+
+		//clean up
+		if (ipi_context != nullptr) {
+			ExFreePool(ipi_context);
+		}
+		if (modify_content != nullptr) {
+			ExFreePool(modify_content);
+		}
+		if (mdl != nullptr) {
+			unmapAddrByMdl(mdl);
+		}
 
 		return status;
 	}
+
+
 
 	inline void* InlineHookManager::mapAddrByMdl(void* addr, size_t map_size, PMDL* mdl)
 	{
 		void* map_buf = nullptr;
 		PMDL _mdl = nullptr;
 
-		if (addr == nullptr || map_size == 0 || mdl == nullptr) {
+		if (addr == nullptr || map_size == 0 || mdl == nullptr || !MmIsAddressValid(addr)) {
+			DbgPrintEx(77, 0, "[+]check error addr -> %p\r\n", addr);
 			return nullptr;
 		}
 
 		do {
+			DbgPrintEx(77, 0, "[+]addr ->%p\r\n",addr);
 
-			_mdl = IoAllocateMdl(addr, map_size, 0, 0, 0);
+			_mdl = IoAllocateMdl(addr, (ULONG)map_size, 0, 0, nullptr);
 			if (_mdl == nullptr) break;
 
 			__try {
@@ -732,44 +942,66 @@ namespace kstd {
 
 	inline InlineHookManager::pHookInfo InlineHookManager::getHookInfoByAddr(void* target_addr)
 	{
+		pHookInfo ret = nullptr;
+		KIRQL irql = {};
 		//acuire the spin lock
-		
+		KeAcquireSpinLock(&__spinlock, &irql);
 		//traverse all the entry from list and get hookinfo by addr
 
-		//release the spin lock
+		for (auto link = __head.Flink; link != &__head; link = link->Flink) {
 
-		return pHookInfo();
+			auto entry = CONTAINING_RECORD(link, HookInfo, links);
+			if (entry->hook_addr == target_addr) {
+				ret = entry;
+				break;
+			}
+		}
+
+		//release the spin lock
+		KeReleaseSpinLock(&__spinlock, irql);
+
+
+		return ret;
 	}
 
 
 	// cpu idx==0的进行hook,一个cpu进来+1,hook的cpu hook完之后再+1 直到所有cpu+1,==cpu count之后,函数返回
-	inline ULONG_PTR InlineHookManager::ipiCallback(void* context)
+	inline ULONG_PTR InlineHookManager::ipiCallback(ULONG_PTR context)
 	{
 		auto cur_cpu_idx = KeGetCurrentProcessorNumberEx(0);
 		auto ipi_context = reinterpret_cast<pIpiContext>(context);
 		auto done_cpu_value = 0;
+
+		//single processor
+		if (__cpu_count == 1) {
+
+			::memcpy(ipi_context->modify_buf, ipi_context->modify_content, ipi_context->modify_size);
+			return 0;
+		}
+
 		if (cur_cpu_idx == 0) {
 			//do hook
 			//wait all the processor enter
-			if (InterlockedCompareExchange(&ipi_context->done_cpu_count, __cpu_count-1, __cpu_count-1) != __cpu_count-1) {
+			if (InterlockedCompareExchange(&ipi_context->done_cpu_count, __cpu_count-1, __cpu_count-1) != (LONG)__cpu_count-1) {
 				KeStallExecutionProcessor(25);
 			}
 			//all the processor enter ipi callback excpet current cpu,then modify mem
-			memcpy(ipi_context->modify_buf, ipi_context->modify_content, ipi_context->modify_size);
+			::memcpy(ipi_context->modify_buf, ipi_context->modify_content, ipi_context->modify_size);
 
 			_InlineInterlockedAdd(&ipi_context->done_cpu_count, 1);
 		}
 		else {
 			done_cpu_value =_InlineInterlockedAdd(&ipi_context->done_cpu_count, 1);
 			//wait all the processor done
-			if (InterlockedCompareExchange(&ipi_context->done_cpu_count, __cpu_count, __cpu_count) != __cpu_count) {
+			if (InterlockedCompareExchange(&ipi_context->done_cpu_count, __cpu_count, __cpu_count) != (LONG)__cpu_count) {
 				KeStallExecutionProcessor(25);
 			}
 		}
 
+		return 0;
 	}
 
-
+#pragma warning(default : 4996)
 }
 
 
