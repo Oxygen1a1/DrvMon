@@ -4,7 +4,17 @@
 
 namespace kstd {
 
+	extern "C" {
+
+		VOID KeGenericCallDpc(__in PKDEFERRED_ROUTINE Routine, __in_opt PVOID Context);
+
+		VOID KeSignalCallDpcDone(__in PVOID SystemArgument1);
+
+		LOGICAL KeSignalCallDpcSynchronize(__in PVOID SystemArgument2);
+
+	}
 	
+
 #pragma warning(disable : 4996)
 	// h disassambly engine
 	namespace hde_inner {
@@ -62,31 +72,38 @@ namespace kstd {
 	}
 
 	class InlineHookManager {
+	public:
+		// what callback sync memory
+		enum class HookType {
+			Dpc,
+			Ipi,
+		};
+	private:
 		typedef struct HookInfo {
 			LIST_ENTRY links;
 			void* hook_addr;
 			void* trampline;
 			unsigned char originalBytes[14];
+			HookType type;
 		}*pHookInfo;
 
 		typedef struct IpiContext {
 			unsigned char* modify_buf;
 			unsigned char* modify_content;
 			size_t modify_size;
+			void* org_addr; /*hook addr org*/
+			void** hk_addr;/*should modify this value in dpc or ipi callback*/
+			void* tramp_line;
 			volatile LONG done_cpu_count;
 		}*pIpiContext;
-
-
 		inline static constexpr int cover_size = 14/* inline hook cover 14 bytes*/;
-	public:
-
 	public:
 		
 		InlineHookManager() = delete;
 		~InlineHookManager() = delete;
 		static InlineHookManager* getInstance();
 		static NTSTATUS init();
-		static NTSTATUS inlinehook(void* target_addr, void** hk_addr);
+		static NTSTATUS inlinehook(void* target_addr, void** hk_addr,HookType hk_type=HookType::Dpc);
 		static NTSTATUS destory();
 		static NTSTATUS remove(void* target_addr);
 		
@@ -96,6 +113,11 @@ namespace kstd {
 		static void unmapAddrByMdl(PMDL mdl);
 		static pHookInfo getHookInfoByAddr(void* target_addr);
 		static ULONG_PTR ipiCallback(ULONG_PTR context);
+		static void dpcCallback(_In_ struct _KDPC* Dpc,
+			_In_opt_ PVOID DeferredContext,
+			_In_opt_ PVOID SystemArgument1,
+			_In_opt_ PVOID SystemArgument2);
+
 	private:
 		inline /*must define as inline*/ static InlineHookManager* __instance;
 		inline static ULONG __cpu_count;
@@ -607,7 +629,9 @@ namespace kstd {
 		return status;
 	}
 
-	inline NTSTATUS InlineHookManager::inlinehook(void* target_addr, void** hk_addr)
+	inline NTSTATUS InlineHookManager::inlinehook(void* target_addr, void** hk_addr /*this value should modify in ipi or dpc callback*/
+	,HookType hk_type
+	)
 	{
 		PMDL mdl = nullptr;
 		auto status = STATUS_SUCCESS;
@@ -703,14 +727,26 @@ namespace kstd {
 			ipi_context->modify_buf = (unsigned char*)modify_buf;
 			ipi_context->modify_size = cover_size;
 			ipi_context->modify_content = modify_content;
+			ipi_context->org_addr = target_addr;/*this address we should __invlpg*/
+			ipi_context->hk_addr = hk_addr;
+			ipi_context->tramp_line = tramp_line;
+
+			//generate ipi or dpc
 			
-			//generate ipi 
-			KeIpiGenericCall(ipiCallback, (ULONG_PTR)(ipi_context));
-
-
+			if (hk_type == HookType::Dpc) {
+				KeGenericCallDpc(dpcCallback, ipi_context);
+			}
+			else {
+				KeIpiGenericCall(ipiCallback, (ULONG_PTR)(ipi_context));
+			}
+			
 			//finally insert the entry to the list tail,there is no possible be failed
-			*hk_addr = tramp_line;
+			//*hk_addr = tramp_line; this will do in dpc or ipi callback
+
 			entry->hook_addr = target_addr;
+			entry->trampline = tramp_line;
+			entry->type = hk_type;
+
 			::memcpy(&entry->originalBytes, org_bytes, sizeof org_bytes);
 
 			KeAcquireSpinLock(&__spinlock, &irql);
@@ -861,11 +897,23 @@ namespace kstd {
 			ipi_context->modify_content = modify_content;
 			ipi_context->modify_size = cover_size;
 			ipi_context->modify_buf = (unsigned char*)modify_buf;
+			ipi_context->hk_addr = nullptr;
+			ipi_context->tramp_line = nullptr;
 
-			KeIpiGenericCall(ipiCallback, (ULONG_PTR)ipi_context);
+			if (hook_info->type == HookType::Dpc) {
+
+				KeGenericCallDpc(dpcCallback, ipi_context);
+
+			}
+			else {
+				KeIpiGenericCall(ipiCallback, (ULONG_PTR)ipi_context);
+			}
 
 			//do not need to unlink the entry from the list
 			//clean mem in innner
+			if(hook_info->trampline!=nullptr)
+				ExFreePool(hook_info->trampline);
+
 			ExFreePool(hook_info);
 
 		} while (false);
@@ -892,12 +940,12 @@ namespace kstd {
 		PMDL _mdl = nullptr;
 
 		if (addr == nullptr || map_size == 0 || mdl == nullptr || !MmIsAddressValid(addr)) {
-			DbgPrintEx(77, 0, "[+]check error addr -> %p\r\n", addr);
+			//DbgPrintEx(77, 0, "[+]check error addr -> %p\r\n", addr);
 			return nullptr;
 		}
 
 		do {
-			DbgPrintEx(77, 0, "[+]addr ->%p\r\n",addr);
+			//DbgPrintEx(77, 0, "[+]addr ->%p\r\n",addr);
 
 			_mdl = IoAllocateMdl(addr, (ULONG)map_size, 0, 0, nullptr);
 			if (_mdl == nullptr) break;
@@ -972,33 +1020,101 @@ namespace kstd {
 		auto ipi_context = reinterpret_cast<pIpiContext>(context);
 		auto done_cpu_value = 0;
 
+
 		//single processor
 		if (__cpu_count == 1) {
 
 			::memcpy(ipi_context->modify_buf, ipi_context->modify_content, ipi_context->modify_size);
+			if (MmIsAddressValid(ipi_context->hk_addr) || ipi_context->tramp_line != nullptr) {
+				*ipi_context->hk_addr = ipi_context->tramp_line;
+			}
+
 			return 0;
 		}
 
 		if (cur_cpu_idx == 0) {
 			//do hook
 			//wait all the processor enter
-			if (InterlockedCompareExchange(&ipi_context->done_cpu_count, __cpu_count-1, __cpu_count-1) != (LONG)__cpu_count-1) {
+			while (InterlockedCompareExchange(&ipi_context->done_cpu_count, __cpu_count - 1, __cpu_count - 1) != (LONG)__cpu_count - 1) {
 				KeStallExecutionProcessor(25);
 			}
 			//all the processor enter ipi callback excpet current cpu,then modify mem
 			::memcpy(ipi_context->modify_buf, ipi_context->modify_content, ipi_context->modify_size);
 
+
+			if (MmIsAddressValid(ipi_context->hk_addr) || ipi_context->tramp_line != nullptr) {
+				*ipi_context->hk_addr = ipi_context->tramp_line;
+			}
+
 			_InlineInterlockedAdd(&ipi_context->done_cpu_count, 1);
 		}
 		else {
-			done_cpu_value =_InlineInterlockedAdd(&ipi_context->done_cpu_count, 1);
+			done_cpu_value = _InlineInterlockedAdd(&ipi_context->done_cpu_count, 1);
+
+
 			//wait all the processor done
-			if (InterlockedCompareExchange(&ipi_context->done_cpu_count, __cpu_count, __cpu_count) != (LONG)__cpu_count) {
+			while (InterlockedCompareExchange(&ipi_context->done_cpu_count, __cpu_count, __cpu_count) != (LONG)__cpu_count) {
 				KeStallExecutionProcessor(25);
 			}
 		}
 
+		//invaild tlb
+		__invlpg(ipi_context->org_addr);
 		return 0;
+	}
+
+	inline void InlineHookManager::dpcCallback(_KDPC* Dpc, PVOID DeferredContext, PVOID SystemArgument1, PVOID SystemArgument2)
+	{
+		UNREFERENCED_PARAMETER(Dpc);
+
+		auto cur_cpu_idx = KeGetCurrentProcessorNumberEx(0);
+		auto ipi_context = reinterpret_cast<pIpiContext>(DeferredContext);
+		auto done_cpu_value = 0;
+
+		
+		//single processor
+		if (__cpu_count == 1) {
+
+			::memcpy(ipi_context->modify_buf, ipi_context->modify_content, ipi_context->modify_size);
+			if (MmIsAddressValid(ipi_context->hk_addr) || ipi_context->tramp_line!=nullptr) {
+				*ipi_context->hk_addr = ipi_context->tramp_line;
+			}
+
+			return;
+		}
+
+		if (cur_cpu_idx == 0) {
+			//do hook
+			//wait all the processor enter
+			while (InterlockedCompareExchange(&ipi_context->done_cpu_count, __cpu_count - 1, __cpu_count - 1) != (LONG)__cpu_count - 1) {
+				KeStallExecutionProcessor(25);
+			}
+			//all the processor enter ipi callback excpet current cpu,then modify mem
+			::memcpy(ipi_context->modify_buf, ipi_context->modify_content, ipi_context->modify_size);
+
+			
+			if (MmIsAddressValid(ipi_context->hk_addr) || ipi_context->tramp_line != nullptr) {
+				*ipi_context->hk_addr = ipi_context->tramp_line;
+			}
+
+			_InlineInterlockedAdd(&ipi_context->done_cpu_count, 1);
+		}
+		else {
+			done_cpu_value = _InlineInterlockedAdd(&ipi_context->done_cpu_count, 1);
+
+			
+			//wait all the processor done
+			while (InterlockedCompareExchange(&ipi_context->done_cpu_count, __cpu_count, __cpu_count) != (LONG)__cpu_count) {
+				KeStallExecutionProcessor(25);
+			}
+		}
+
+		//invaild tlb
+		__invlpg(ipi_context->org_addr);
+
+		KeSignalCallDpcSynchronize(SystemArgument2);
+		KeSignalCallDpcDone(SystemArgument1);
+
 	}
 
 #pragma warning(default : 4996)
