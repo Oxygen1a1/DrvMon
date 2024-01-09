@@ -1,6 +1,7 @@
 #pragma once
 #include <fltKernel.h>
 #include <intrin.h>
+#include <ntimage.h>
 
 namespace kstd {
 
@@ -71,6 +72,65 @@ namespace kstd {
 
 	}
 
+
+
+	class DrvObjHookManager {
+	private:
+		struct DrvObjInfo {
+
+			void* base;
+			void* entry_point;
+			PDRIVER_OBJECT drv;
+			void(*drvunload_callback)(PDRIVER_OBJECT, void* context);
+			NTSTATUS(*drventry_callback)(PDRIVER_OBJECT, PUNICODE_STRING, void* context);
+			LIST_ENTRY links;
+			void* entry_context;
+			void* unload_context;
+			PDRIVER_UNLOAD org_unload;
+			unsigned char org_bytes[14];
+			bool is_exit;
+
+		};
+
+	public:
+
+		static DrvObjHookManager* getInstance();
+
+		//must called at img call back routine
+		static NTSTATUS addDrvObjHook(void* img_base,
+			NTSTATUS(*drventry_callback)(PDRIVER_OBJECT, PUNICODE_STRING, void* context),
+			void(*drvunload_callback)(PDRIVER_OBJECT, void* context),
+			void* entry_context=nullptr,void* unload_context=nullptr);
+
+		//call this,it's will cancel drv unload hook
+		static void removeDrvObjHook(void* img_base);
+
+		//call this func will cancel all the drv unload hook and will clean up this instance
+		static void destory();
+
+	private:
+
+		//helper function
+		static void* getEntryPoint(void* img);
+		static void* mapAddrByMdl(void* addr, size_t map_size, PMDL* mdl);
+		static void unmapAddrByMdl(PMDL mdl);
+
+		static DrvObjInfo* findDrvInfoByBase(void* entry_point);
+		static NTSTATUS defaultDrvEntry(PDRIVER_OBJECT drv,PUNICODE_STRING u);
+		static void defaultDrvUnload(PDRIVER_OBJECT drv);
+
+	private:
+		inline static bool __inited;
+		inline static constexpr unsigned pool_tag = 'drvH';
+		inline static LIST_ENTRY __head;
+		inline static KSPIN_LOCK __lock;
+		inline static DrvObjHookManager* __instance;
+	};
+	//driver object hook
+	//can hook dispatch func,driver entry,driver unload, must init at 
+	//you can exalloate memory and call init,can not call ctor or dtor!(it's only use at a ptr)
+	
+	//inline hook manager
 	class InlineHookManager {
 	public:
 		// what callback sync memory
@@ -1116,6 +1176,305 @@ namespace kstd {
 		KeSignalCallDpcDone(SystemArgument1);
 
 	}
+
+
+	inline DrvObjHookManager* DrvObjHookManager::getInstance()
+	{
+		if (__instance == nullptr) {
+			__instance = reinterpret_cast<DrvObjHookManager*>(ExAllocatePoolWithTag(NonPagedPoolNx, sizeof DrvObjHookManager, pool_tag));
+			if (__instance) {
+
+				KeInitializeSpinLock(&__lock);
+				InitializeListHead(&__head);
+				__inited = true;
+			}
+		}
+		return __instance;
+	}
+
+	inline NTSTATUS DrvObjHookManager::addDrvObjHook(void* img_base, 
+		NTSTATUS(*drventry_callback)(PDRIVER_OBJECT, PUNICODE_STRING, void* context), 
+		void(*drvunload_callback)(PDRIVER_OBJECT, void* context), 
+		void* entry_context,
+		void* unload_context
+	)
+	{
+		auto mdl = PMDL{};
+		DrvObjInfo* entry = nullptr;
+		auto status = STATUS_SUCCESS;
+		auto irql = KIRQL{};
+
+		if (img_base == nullptr || drventry_callback==nullptr || drvunload_callback==nullptr) {
+			status = STATUS_UNSUCCESSFUL;
+			return status;
+		}
+
+
+		do {
+			//alloate memory
+			entry = reinterpret_cast<DrvObjInfo*>(ExAllocatePoolWithTag(NonPagedPoolNx, sizeof DrvObjInfo, pool_tag));
+			if (!entry) {
+				status = STATUS_INSUFFICIENT_RESOURCES;
+				break;
+			}
+			memset(entry, 0, sizeof DrvObjInfo);
+
+			unsigned char jmp_code[14] = { 0xff,0x25,0,0,0,0 };
+			//hook driver entry and save org_bytes
+			auto modify_buf = mapAddrByMdl(getEntryPoint(img_base), sizeof jmp_code, &mdl);
+			if (!modify_buf) {
+				status = STATUS_MAPPED_FILE_SIZE_ZERO;
+				break;
+			}
+
+			memcpy(entry->org_bytes, getEntryPoint(img_base), sizeof entry->org_bytes);
+			*reinterpret_cast<UINT64*>(jmp_code + 6) = (UINT64)defaultDrvEntry;
+			memcpy(modify_buf, jmp_code, sizeof jmp_code);//hook
+
+			//insert it to list
+			entry->base = img_base;
+			entry->drventry_callback = drventry_callback;
+			entry->drvunload_callback = drvunload_callback;
+			entry->unload_context = unload_context;
+			entry->entry_context = entry_context;
+			entry->entry_point = getEntryPoint(img_base);
+
+			KeAcquireSpinLock(&__lock, &irql);
+
+			InsertTailList(&__head, &entry->links);
+
+			KeReleaseSpinLock(&__lock, irql);
+
+		} while (0);
+
+		//clean up
+		if (mdl != nullptr) {
+			unmapAddrByMdl(mdl);
+		}
+
+		if (!NT_SUCCESS(status)) {
+			if(entry!=nullptr)
+				ExFreePool(entry);
+		}
+
+		return status;
+	}
+
+	inline void DrvObjHookManager::removeDrvObjHook(void* img_base)
+	{
+		KIRQL irql = {};
+		
+		auto drvobj_info = findDrvInfoByBase(img_base);
+		if (drvobj_info != nullptr) {
+			KeAcquireSpinLock(&__lock, &irql);
+
+			//must resume unload hook at driver does not unload
+			if(!drvobj_info->is_exit)
+				drvobj_info->drv->DriverUnload = drvobj_info->org_unload;
+			 
+			RemoveEntryList(&drvobj_info->links);
+
+			KeReleaseSpinLock(&__lock, irql);
+
+			ExFreePool(drvobj_info);
+		}
+	}
+
+
+	inline void DrvObjHookManager::destory()
+	{
+		KIRQL irql = {};
+
+		if (__instance && MmIsAddressValid(__instance)) {
+			ExFreePool(__instance);
+			
+			KeAcquireSpinLock(&__lock, &irql);
+			while (!IsListEmpty(&__head)) {
+
+				auto link = RemoveEntryList(&__head);
+				auto entry = CONTAINING_RECORD(link,DrvObjInfo, links);
+
+				entry->drv->DriverUnload = entry->org_unload;
+				ExFreePool(entry);
+			}
+			KeReleaseSpinLock(&__lock, irql);
+
+			__inited = false;
+			ExFreePool(__instance);
+			__instance = nullptr;
+		}
+	}
+
+	inline void* DrvObjHookManager::getEntryPoint(void* img)
+	{
+		void* ret = nullptr;
+
+		do {
+
+			if (img == nullptr) break;
+
+			auto dos_header = reinterpret_cast<PIMAGE_DOS_HEADER>(img);
+
+			if (dos_header->e_magic != IMAGE_DOS_SIGNATURE) break;
+
+			auto nt_headers = reinterpret_cast<PIMAGE_NT_HEADERS>((UINT64)(img)+dos_header->e_lfanew);
+
+			if (nt_headers->Signature != IMAGE_NT_SIGNATURE) break;
+
+			ret = reinterpret_cast<void*>((UINT64)img + nt_headers->OptionalHeader.AddressOfEntryPoint);
+
+		} while (0);
+
+		return ret;
+	}
+
+	inline void* DrvObjHookManager::mapAddrByMdl(void* addr, size_t map_size, PMDL* mdl)
+	{
+		void* map_buf = nullptr;
+		PMDL _mdl = nullptr;
+
+		if (addr == nullptr || map_size == 0 || mdl == nullptr || !MmIsAddressValid(addr)) {
+			return nullptr;
+		}
+
+		do {
+
+			_mdl = IoAllocateMdl(addr, (ULONG)map_size, 0, 0, nullptr);
+			if (_mdl == nullptr) break;
+
+			__try {
+
+				MmProbeAndLockPages(_mdl, KernelMode, IoReadAccess);
+				map_buf = MmGetSystemAddressForMdlSafe(_mdl, NormalPagePriority);
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER) {
+				map_buf = nullptr;
+			}
+
+			if (map_buf == nullptr) break;
+
+			*mdl = _mdl;
+			return map_buf;
+
+		} while (false);
+
+		//if can run here,failed
+
+		if (map_buf != nullptr) {
+			MmUnlockPages(_mdl);
+		}
+		if (_mdl) {
+			IoFreeMdl(_mdl);
+		}
+
+		return nullptr;
+	}
+
+	inline void DrvObjHookManager::unmapAddrByMdl(PMDL mdl)
+	{
+		if (mdl != nullptr) {
+			MmUnlockPages(mdl);
+			IoFreeMdl(mdl);
+		}
+	}
+
+	inline DrvObjHookManager::DrvObjInfo* DrvObjHookManager::findDrvInfoByBase(void* img_base)
+	{
+		KIRQL irql = {  };
+		DrvObjInfo* ret = nullptr;
+
+		KeAcquireSpinLock(&__lock, &irql);
+		
+		for (auto link=__head.Flink;link!=&__head;link=link->Flink) {
+			auto entry = CONTAINING_RECORD(link, DrvObjInfo, links);
+
+			if (entry->base == img_base) {
+				ret = entry;
+				break;
+			}
+		}
+
+		KeReleaseSpinLock(&__lock, irql);
+
+		return ret;
+	}
+
+	inline NTSTATUS DrvObjHookManager::defaultDrvEntry(PDRIVER_OBJECT drv, PUNICODE_STRING u)
+	{
+		auto status = STATUS_SUCCESS;
+		auto mdl = PMDL{};
+		auto drvobj_info = findDrvInfoByBase(drv->DriverStart);
+
+		if (drvobj_info == nullptr) {
+			//fatal error
+			return STATUS_UNSUCCESSFUL;
+		}
+
+
+		do {
+
+			//then resume hook bytes
+			auto modify_buf = mapAddrByMdl(drvobj_info->entry_point, sizeof drvobj_info->org_bytes, &mdl);
+			if (modify_buf == nullptr) {
+				status = STATUS_MAPPED_FILE_SIZE_ZERO;
+				break;
+			}
+			memcpy(modify_buf,drvobj_info->org_bytes ,sizeof drvobj_info->org_bytes);
+
+			//call hook func
+			status=drvobj_info->drventry_callback(drv, u, drvobj_info->entry_context);
+			if (!NT_SUCCESS(status)) break;
+
+			//call org func
+			auto org_entry = reinterpret_cast<NTSTATUS(*)(PDRIVER_OBJECT, PUNICODE_STRING)>(drvobj_info->entry_point);
+			status = org_entry(drv,u);
+			if (!NT_SUCCESS(status)) {
+				break;
+			}
+
+
+			//then hook driver unload and save org driver unload
+			drvobj_info->org_unload = drv->DriverUnload;
+			drv->DriverUnload = defaultDrvUnload;
+
+		} while (0);
+
+
+		//clean up
+		if (mdl != nullptr) {
+			unmapAddrByMdl(mdl);
+		}
+
+		//the driver will exit so clean entry from list
+		if (!NT_SUCCESS(status)) {
+			removeDrvObjHook(drv->DriverStart);
+		}
+
+		return status;
+	}
+
+	inline void DrvObjHookManager::defaultDrvUnload(PDRIVER_OBJECT drv)
+	{
+		auto drvobj_info = findDrvInfoByBase(drv->DriverStart);
+		if (!drvobj_info) {
+			//fatal error
+			return;
+		}
+
+		//call hook driver unload
+		drvobj_info->drvunload_callback(drv, drvobj_info->unload_context);
+
+		drvobj_info->is_exit = true;
+
+		auto org_unload = drvobj_info->org_unload;
+		//clean this entry from list
+		removeDrvObjHook(drvobj_info->base);
+
+		//call org driver unload
+		org_unload(drv);
+	}
+
+
 
 #pragma warning(default : 4996)
 }

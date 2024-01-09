@@ -1,6 +1,7 @@
 #include <fltKernel.h>
 #include "../include/dm_ref.hpp"
 #include "../include/kstl/khook.hpp"
+#include "../include/kstl/kstring.hpp"
 
 
 PEPROCESS hkIoGetCurrentProcess();
@@ -62,13 +63,14 @@ void testInlineHook() {
 	status = inlinehk_ins->init();
 	status = inlinehk_ins->init();
 
-	__debugbreak();
 
-	for (int i = 0; i < 10000; i++) {
+	//because the func is speical,it's can called at any irql,so i use ipi to hook
+	//but ipi called frecuency will called your cpu block!
+	for (int i = 0; i < 100; i++) {
 		
 		fun1 = hkIoGetCurrentProcess;
 
-		auto status2=inlinehk_ins->inlinehook(IoGetCurrentProcess, (void**)&fun1);
+		auto status2=inlinehk_ins->inlinehook(IoGetCurrentProcess, (void**)&fun1, kstd::InlineHookManager::HookType::Ipi);
 
 		auto status1=inlinehk_ins->remove(IoGetCurrentProcess);
 		
@@ -86,14 +88,14 @@ void testInlineHook() {
 		DbgPrintEx(77, 0, "[+]%d\r\n",i);
 	}
 	
-	for (int i = 0; i < 10000; i++) {
+	for (int i = 0; i < 100; i++) {
 		fun1 = hkIoGetCurrentProcess;
 		fun2 = hkPsGetCurrentThread;
 		fun3 = hkPsGetCurrentProcessId;
 
-		inlinehk_ins->inlinehook(IoGetCurrentProcess, (void**)&fun1);
-		inlinehk_ins->inlinehook(PsGetCurrentThread, (void**)&fun2);
-		inlinehk_ins->inlinehook(PsGetCurrentProcessId, (void**)&fun3);
+		inlinehk_ins->inlinehook(IoGetCurrentProcess, (void**)&fun1,kstd::InlineHookManager::HookType::Ipi);
+		inlinehk_ins->inlinehook(PsGetCurrentThread, (void**)&fun2, kstd::InlineHookManager::HookType::Ipi);
+		inlinehk_ins->inlinehook(PsGetCurrentProcessId, (void**)&fun3, kstd::InlineHookManager::HookType::Ipi);
 
 
 		inlinehk_ins->remove(IoGetCurrentProcess);
@@ -107,14 +109,9 @@ void testInlineHook() {
 	}
 
 
-	inlinehk_ins->inlinehook(IoGetCurrentProcess, (void**)&fun1);
-	inlinehk_ins->inlinehook(PsGetCurrentThread, (void**)&fun2);
-	inlinehk_ins->inlinehook(PsGetCurrentProcessId, (void**)&fun3);
-
-	auto wait_time = LARGE_INTEGER{  };
-	wait_time.QuadPart = -10000000;
-
-	KeDelayExecutionThread(KernelMode, false, &wait_time);
+	inlinehk_ins->inlinehook(IoGetCurrentProcess, (void**)&fun1, kstd::InlineHookManager::HookType::Ipi);
+	inlinehk_ins->inlinehook(PsGetCurrentThread, (void**)&fun2, kstd::InlineHookManager::HookType::Ipi);
+	inlinehk_ins->inlinehook(PsGetCurrentProcessId, (void**)&fun3, kstd::InlineHookManager::HookType::Ipi);
 
 	inlinehk_ins->destory();
 
@@ -124,6 +121,7 @@ void testInlineHook() {
 VOID ldImgCallback(_In_opt_ PUNICODE_STRING FullImageName,
 	_In_ HANDLE ProcessId,                // pid into which image is being mapped
 	_In_ PIMAGE_INFO ImageInfo);
+
 
 EXTERN_C NTSTATUS DriverEntry(PDRIVER_OBJECT drv,PUNICODE_STRING) {
 	auto status = STATUS_SUCCESS;
@@ -162,5 +160,26 @@ VOID ldImgCallback(_In_opt_ PUNICODE_STRING FullImageName,
 
 	FullImageName; ProcessId; ImageInfo;
 
+	
 
+	//filter r3 image loaded
+	if ((unsigned long long)ImageInfo->ImageBase < 0xf000000000000000) return;
+
+	//filtering not driver module
+	if (kstd::kwstring(FullImageName->Buffer).find(L".sys") == kstd::kwstring::npos) return;
+
+	kstd::DrvObjHookManager::getInstance()->addDrvObjHook(ImageInfo->ImageBase,
+		[](PDRIVER_OBJECT drv, PUNICODE_STRING u, void* context)->NTSTATUS {
+			UNREFERENCED_PARAMETER(u);
+			DbgPrintEx(77, 0, "[+]drv loaded! %ws \t context %p\r\n", drv->DriverName.Buffer, context);
+			return STATUS_SUCCESS;
+		},
+		[](PDRIVER_OBJECT drv,void* context) {
+
+			DbgPrintEx(77, 0, "[+]drv unloaded! %ws \t context %p\r\n", drv->DriverName.Buffer, context);
+		},
+		(void*)0x1234,
+		(void*)0x4321
+		);
 }
+
