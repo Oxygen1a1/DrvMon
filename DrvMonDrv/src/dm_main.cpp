@@ -2,6 +2,7 @@
 #include "../include/dm_ref.hpp"
 #include "../include/kstl/khook.hpp"
 #include "../include/kstl/kstring.hpp"
+#include "../include/kstl/klog.hpp"
 
 
 PEPROCESS hkIoGetCurrentProcess();
@@ -118,9 +119,12 @@ void testInlineHook() {
 
 }
 
+
 VOID ldImgCallback(_In_opt_ PUNICODE_STRING FullImageName,
 	_In_ HANDLE ProcessId,                // pid into which image is being mapped
 	_In_ PIMAGE_INFO ImageInfo);
+
+
 
 
 EXTERN_C NTSTATUS DriverEntry(PDRIVER_OBJECT drv,PUNICODE_STRING) {
@@ -133,13 +137,18 @@ EXTERN_C NTSTATUS DriverEntry(PDRIVER_OBJECT drv,PUNICODE_STRING) {
 
 		PsRemoveLoadImageNotifyRoutine(ldImgCallback);
 
+		kstd::DrvObjHookManager::getInstance()->destory();
+
+
 	};
+
 
 	do {
 
 		//init image notify callback
 		status = PsSetLoadImageNotifyRoutine(ldImgCallback);
 		if (!NT_SUCCESS(status)) {
+			LOG_DEBUG("failed to setload image notify! errcode:%x\r\n",status);
 			break;
 		}
 

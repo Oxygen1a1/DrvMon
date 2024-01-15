@@ -1204,7 +1204,7 @@ namespace kstd {
 		auto status = STATUS_SUCCESS;
 		auto irql = KIRQL{};
 
-		if (img_base == nullptr || drventry_callback==nullptr || drvunload_callback==nullptr) {
+		if (img_base == nullptr || drventry_callback==nullptr || drvunload_callback==nullptr || __instance==nullptr) {
 			status = STATUS_UNSUCCESSFUL;
 			return status;
 		}
@@ -1300,7 +1300,6 @@ namespace kstd {
 			KeReleaseSpinLock(&__lock, irql);
 
 			__inited = false;
-			ExFreePool(__instance);
 			__instance = nullptr;
 		}
 	}
