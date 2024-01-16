@@ -73,6 +73,10 @@
     <FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\de_fakemodule.cpp" />
+    <ClCompile Include="src\de_hookmodule.cpp" />
+    <ClCompile Include="src\de_log.cpp" />
+    <ClCompile Include="src\de_user.cpp" />
     <ClCompile Include="src\dm_main.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -85,6 +89,7 @@
     <ClInclude Include="include\kstl\kfunctional.hpp" />
     <ClInclude Include="include\kstl\khook.hpp" />
     <ClInclude Include="include\kstl\klist.hpp" />
+    <ClInclude Include="include\kstl\klog.hpp" />
     <ClInclude Include="include\kstl\kmemory.hpp" />
     <ClInclude Include="include\kstl\kpe_parse.hpp" />
     <ClInclude Include="include\kstl\kref.hpp" />

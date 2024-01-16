@@ -12,7 +12,7 @@ HANDLE hkPsGetCurrentProcessId();
 auto fun1 = reinterpret_cast<PEPROCESS(*)()>(hkIoGetCurrentProcess);
 auto fun2 = reinterpret_cast<PETHREAD(*)()>(hkPsGetCurrentThread);
 auto fun3 = reinterpret_cast<HANDLE(*)()>(hkPsGetCurrentProcessId);
- 
+
 
 PEPROCESS hkIoGetCurrentProcess() {
 	DbgPrintEx(77, 0, "hkIoGetCurrentProcess func is %p\r\n",fun1);
@@ -125,11 +125,29 @@ VOID ldImgCallback(_In_opt_ PUNICODE_STRING FullImageName,
 	_In_ PIMAGE_INFO ImageInfo);
 
 
+auto func_org = reinterpret_cast<LARGE_INTEGER(*)(PLARGE_INTEGER)>(0);
 
+LARGE_INTEGER KeQueryPerformanceCounterDetour(
+	OUT PLARGE_INTEGER PerformanceFrequency OPTIONAL
+)
+{
+	PerformanceFrequency;
+	auto res = func_org(PerformanceFrequency);
+
+	if (KeGetCurrentIrql() <= APC_LEVEL)
+	{
+	    //LOG_DEBUG("return %lld\r\n", res.QuadPart);
+	    res.QuadPart *= 2;
+	}
+
+	return res;
+}
 
 EXTERN_C NTSTATUS DriverEntry(PDRIVER_OBJECT drv,PUNICODE_STRING) {
 	auto status = STATUS_SUCCESS;
 
+	
+	
 	//bypass driver sign,now you can call PsSetLoadImageNotifyRoutine success
 	kstd::SysInfoManager::byPassSignCheck(drv);
 
@@ -138,7 +156,7 @@ EXTERN_C NTSTATUS DriverEntry(PDRIVER_OBJECT drv,PUNICODE_STRING) {
 		PsRemoveLoadImageNotifyRoutine(ldImgCallback);
 
 		kstd::DrvObjHookManager::getInstance()->destory();
-
+		kstd::InlineHookManager::getInstance()->destory();
 
 	};
 
@@ -155,6 +173,10 @@ EXTERN_C NTSTATUS DriverEntry(PDRIVER_OBJECT drv,PUNICODE_STRING) {
 
 		testInlineHook();
 
+
+		func_org = reinterpret_cast<LARGE_INTEGER(*)(PLARGE_INTEGER)>(KeQueryPerformanceCounterDetour);
+		kstd::InlineHookManager::getInstance()->init();
+		kstd::InlineHookManager::getInstance()->inlinehook(KeQueryPerformanceCounter, (void**)&func_org, kstd::InlineHookManager::HookType::Ipi);
 
 	} while (0);
 	
