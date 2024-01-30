@@ -9,9 +9,9 @@
 namespace kstd {
 
 	//通过ERESOURCE进行同步
-	class Source {
+	class Resource {
 	public:
-		Source(ERESOURCE* res) :__res(res) {}
+		Resource(ERESOURCE* res) :__res(res) {}
 		void acquire() {
 
 			KeEnterCriticalRegion();

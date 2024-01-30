@@ -2,6 +2,8 @@
 #ifndef _KLOG_H_
 #define  _KLOG_H_
 
+//a vert simple log lib
+
 #include <fltKernel.h>
 #include <ntstrsafe.h>
 #pragma prefast(disable : 30030)

@@ -27,6 +27,7 @@
     <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
     <ConfigurationType>Driver</ConfigurationType>
     <DriverType>WDM</DriverType>
+    <Driver_SpectreMitigation>Spectre</Driver_SpectreMitigation>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <TargetVersion>Windows10</TargetVersion>
@@ -34,9 +35,11 @@
     <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
     <ConfigurationType>Driver</ConfigurationType>
     <DriverType>WDM</DriverType>
+    <Driver_SpectreMitigation>Spectre</Driver_SpectreMitigation>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.props" />
   </ImportGroup>
   <ImportGroup Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
@@ -47,11 +50,13 @@
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
     <OutDir>$(SolutionDir)bin\$(Platform)\$(ConfigurationName)\</OutDir>
     <IntDir>$(ProjectDir)obj\$(Platform)\$(ConfigurationName)\</IntDir>
+    <IncludePath>$(ProjectDir)include\;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
     <OutDir>$(SolutionDir)bin\$(Platform)\$(ConfigurationName)\</OutDir>
     <IntDir>$(ProjectDir)obj\$(Platform)\$(ConfigurationName)\</IntDir>
+    <IncludePath>$(ProjectDir)include\;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <DriverSign>
@@ -59,6 +64,10 @@
     </DriverSign>
     <ClCompile>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+      <InlineFunctionExpansion>Default</InlineFunctionExpansion>
+      <IntrinsicFunctions>false</IntrinsicFunctions>
+      <Optimization>Custom</Optimization>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -67,6 +76,9 @@
     </DriverSign>
     <ClCompile>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+      <InlineFunctionExpansion>Default</InlineFunctionExpansion>
+      <Optimization>Custom</Optimization>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -75,12 +87,13 @@
   <ItemGroup>
     <ClCompile Include="src\de_fakemodule.cpp" />
     <ClCompile Include="src\de_hookmodule.cpp" />
-    <ClCompile Include="src\de_log.cpp" />
-    <ClCompile Include="src\de_user.cpp" />
     <ClCompile Include="src\dm_main.cpp" />
+    <ClCompile Include="src\dm_utils.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="include\dm_fakemodule.h" />
     <ClInclude Include="include\dm_ref.hpp" />
+    <ClInclude Include="include\dm_utils.h" />
     <ClInclude Include="include\kstl\karray.hpp" />
     <ClInclude Include="include\kstl\kautolock.hpp" />
     <ClInclude Include="include\kstl\kavl.hpp" />
@@ -96,7 +109,11 @@
     <ClInclude Include="include\kstl\kstring.hpp" />
     <ClInclude Include="include\kstl\ksystem_info.hpp" />
   </ItemGroup>
+  <ItemGroup>
+    <MASM Include="src\de_asm_fakemodule.asm" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
   </ImportGroup>
 </Project>

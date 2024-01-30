@@ -36,13 +36,15 @@ namespace kstd {
 
 		const T* c_str() const { return __data; }
 		size_t size() const { return __size; }
-		size_t length() const { return __size / sizeof(T) - 1; }
+		size_t length() const { return __size / sizeof(T) - 1; } //字符串长度 不包括\0
 		T& operator[](int idx);
 		basic_string& operator+=(const basic_string& rhs);
 		basic_string& operator+=(const T* str);
-		bool operator==(const basic_string& rhs);
-		bool operator==(const T* str);
+		bool operator==(const basic_string& rhs) const;
+		bool operator==(const T* str) const;
+
 		basic_string& operator=(const basic_string& rhs);/*不考虑移动语义了*/
+
 		basic_string& operator=(const T* str);
 		UNDEFINE_STRING getXXString();/*特色功能*/
 	private:
@@ -51,6 +53,23 @@ namespace kstd {
 	};
 
 	
+	template<typename T>
+	inline basic_string<T>& kstd::basic_string<T>::operator=(const basic_string& rhs) {
+		//不考虑移动语义
+		__data = nullptr;
+		__size = 0;
+
+		auto p = __alloc(rhs.__size);
+		if (!p) return *this;
+
+		memset(p, 0, rhs.__size);
+		memcpy(p, rhs.__data, rhs.__size);
+
+		this->__size = rhs.__size;
+		this->__data = p;
+
+		return *this;
+	}
 	template<typename T>
 	inline basic_string<T>& kstd::basic_string<T>::operator+=(const basic_string& rhs)
 	{
@@ -104,7 +123,7 @@ namespace kstd {
 
 
 	template<typename T>
-	inline bool basic_string<T>::operator==(const basic_string& rhs)
+	inline bool basic_string<T>::operator==(const basic_string& rhs) const
 	{
 		auto ret = false;
 		do {
@@ -117,7 +136,7 @@ namespace kstd {
 				ret = false;
 				break;
 			}
-			if (this->c_str() == nullptr || rhs.c_str() == nullptr) {
+			if (!MmIsAddressValid((PVOID)this->c_str()) || !MmIsAddressValid((PVOID)rhs.c_str())) {
 				ret = false;
 				break;
 			}
@@ -139,7 +158,7 @@ namespace kstd {
 	}
 
 	template<typename T>
-	inline bool basic_string<T>::operator==(const T* str)
+	inline bool basic_string<T>::operator==(const T* str) const
 	{
 
 		auto rhs = basic_string(str);
@@ -178,7 +197,7 @@ namespace kstd {
 		}
 		memcpy(p, rhs.__data, rhs.__size);
 		this->__size = rhs.__size;
-
+		this->__data = p;
 	}
 
 	template<typename T>
@@ -293,6 +312,8 @@ namespace kstd {
 	template<>
 	inline basic_string<char>::basic_string(const char* str):__data(0),__size(0)
 	{
+		if (!MmIsAddressValid((PVOID)str)) return;
+
 		auto len=strlen(str);
 		auto p=__alloc(len*sizeof(char) + sizeof(char));
 		if (p == nullptr) {
@@ -311,6 +332,8 @@ namespace kstd {
 	/// <param name="str"></param>
 	template<>
 	inline basic_string<wchar_t>::basic_string(const wchar_t* str) :__data(0), __size(0) {
+		if (!MmIsAddressValid((PVOID)str)) return;
+
 		auto len = wcslen(str);
 		auto p = __alloc(len * sizeof(wchar_t) + sizeof(wchar_t));
 		if (p == nullptr) {
@@ -367,6 +390,8 @@ namespace kstd {
 	template<>
 	inline basic_string<wchar_t>& kstd::basic_string<wchar_t>::operator=(const wchar_t* str)
 	{
+		if (!MmIsAddressValid((PVOID)str)) return*this;
+
 		__size = 0;
 		__free(__data);
 		__data = 0;
@@ -388,6 +413,8 @@ namespace kstd {
 	template<>
 	inline basic_string<char>& kstd::basic_string<char>::operator=(const char* str)
 	{
+		if (!MmIsAddressValid((PVOID)str)) return*this;
+
 		__size = 0;
 		__free(__data);
 		__data = 0;

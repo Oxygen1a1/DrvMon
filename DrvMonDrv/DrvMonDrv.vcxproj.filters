@@ -28,10 +28,7 @@
     <ClCompile Include="src\de_hookmodule.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\de_log.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\de_user.cpp">
+    <ClCompile Include="src\dm_utils.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -81,5 +78,16 @@
     <ClInclude Include="include\kstl\klog.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\dm_fakemodule.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\dm_utils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="src\de_asm_fakemodule.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
   </ItemGroup>
 </Project>

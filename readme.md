@@ -17,17 +17,32 @@
 此文件夹是驱动的源码,**DrvMonDrv分为下面几个模块**
 
 - `de_main`定义了驱动的`DriverEntry`,初始化了一些东西,比如`ImgCallback`等等;
+- `de_fakemodule.cpp`和`de_fakemodule.h`是维护了内核重载假模块的数据结构,不可单独使用,项目内部文件。他的功能的
+  - 他会hook 假模块的所有函数到真模块,同时调用日志.
+  - 同时提供接口，可以添加假模块和欺骗的驱动,外加增加hook的选项等等。
+  - 维护相关数据结构
 
-- `de_fakemodule.cpp`和`de_fakemodule.h`是维护了内核重载假模块的数据结构,不可单独使用,项目内部文件
 
-- `de_hookmodule.cpp`和`de_hookmodule.h`是通过PE的`pdata`节区遍历所有的函数,然后jmp到真正模块的函数,在这之前,会有shellcode 先jmp到`de_log.cpp`和`de_log.asm`。此外,`de_hookmodule.cpp`还负责hook比如`MmGetSystemRoutineAddress`和`ZwQuerySystemInfo`等这些关键函数,**因为这些特殊函数hook是为了达到DrvMon运行的最基本条件,所以放在这,而不是放在下面的`de_user.cpp`**同时,他对外提供接口,可以方便地hook函数,同时他还维护了当前已经被hook的驱动,等等,是最复杂的模块
+- `de_hookmodule.cpp`和`de_hookmodule.h`主要是声明和定义自定义hook函数,调用`fakemodule`模块的接口
+  - 它会调用`fakemodule`模块的`addhook`接口,增加很多hook,打印出来相关的信息(根据不同函数)。
+  - 它处理了特殊的函数,比如`ZwQuery/NtQueryXXXInfomation`,使内核重载更加真实。
 
-- `de_log.cpp` `de_log_.asm`,`de_log.h``de_hookmodule`hook假模块 从函数头跳转过来的`de_log.asm`主要是为了维护原先的堆栈,保存寄存器环境，`de_log.cpp`记录寄存器,堆栈数据,同时拷贝寄存器有用的数据(可能)
-- `de_user.cpp`是调用`de_hookmodule`的接口,hook一些用户感兴趣的函数,比如`ExAllocatePoolWithTag`,从而获取一些关键的信息
+- de_utils模块声明和定义了一些常用的杂项函数,比如w2s,s2w等等
 
 ### `DrvMonConsole`
 
-### `DrvMonGUI`
+## Todo
+
+- [x] 大体框架
+
+- [ ] hook 必须的函数
+- [ ] LOG记录时间更加人性化
+- [ ] hook 额外附加函数
+- [ ] 堆栈遍历
+- [ ] R3程序PDB重新解析
+- [ ] 处理data区域,
+
+### 
 
 
 

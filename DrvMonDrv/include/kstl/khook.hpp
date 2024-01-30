@@ -1123,7 +1123,10 @@ namespace kstd {
 		return 0;
 	}
 
-	inline void InlineHookManager::dpcCallback(_KDPC* Dpc, PVOID DeferredContext, PVOID SystemArgument1, PVOID SystemArgument2)
+	inline void InlineHookManager::dpcCallback(_In_ struct _KDPC* Dpc,
+			_In_opt_ PVOID DeferredContext,
+			_In_opt_ PVOID SystemArgument1,
+			_In_opt_ PVOID SystemArgument2)
 	{
 		UNREFERENCED_PARAMETER(Dpc);
 
@@ -1409,6 +1412,7 @@ namespace kstd {
 			return STATUS_UNSUCCESSFUL;
 		}
 
+		drvobj_info->drv = drv;
 
 		do {
 
@@ -1446,7 +1450,9 @@ namespace kstd {
 
 		//the driver will exit so clean entry from list
 		if (!NT_SUCCESS(status)) {
-			removeDrvObjHook(drv->DriverStart);
+
+			defaultDrvUnload(drv);
+
 		}
 
 		return status;
@@ -1470,7 +1476,10 @@ namespace kstd {
 		removeDrvObjHook(drvobj_info->base);
 
 		//call org driver unload
-		org_unload(drv);
+		//if org_unload==nullptr maybe the driverentry return value is not success
+		//so we should check the org_unload
+		if(org_unload!=nullptr)
+			org_unload(drv);
 	}
 
 

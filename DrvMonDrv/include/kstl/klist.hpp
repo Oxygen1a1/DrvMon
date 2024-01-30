@@ -10,6 +10,30 @@
 
 
 namespace kstd {
+
+	//有些东西必须自己实现,加个命名空间,不影响其他使用
+	namespace list_inner {
+		template<typename T, typename U>
+		struct is_same {
+			static constexpr bool value = false;
+		};
+
+		template<typename T>
+		struct is_same<T, T> {
+			static constexpr bool value = true;
+		};
+
+		template<typename T, typename U>
+		constexpr bool is_same_v = is_same<T, U>::value;
+
+
+	}
+
+#define MUSTADDED 		void operator delete(void* p, size_t s) { \
+	p,s; \
+	KeBugCheckEx(1, 1, 1, 1, 1); \
+	} \
+
 #define POOL_TAG 'klst'
 		enum class InsertType {
 			head,
@@ -49,14 +73,24 @@ namespace kstd {
 			void init();
 			template<typename DestoryFunc>
 			void destory(DestoryFunc func=nullptr);
-			bool insert(const T target,InsertType type);
+			bool insert(const T& target,InsertType type);
+			bool insert(T&& target, InsertType type);
 
 			template<typename CompareFunc>
-			T* find(const T target,CompareFunc func);
+			T* find(const T& target,CompareFunc func);
 
 			template<typename CompareFunc>
-			T remove(const T target, CompareFunc func);
+			void remove(const T& target, CompareFunc func);
 
+			//从设计上 是不支持拷贝构造的 如果真的需要 以后再加 只不过以后需要大改
+			Klist& operator=(const Klist& rhs)=delete;
+			Klist(const Klist& rhs) = delete;
+
+			//从设计上 是不支持移动语义的
+			Klist& operator=(Klist&& rhs) = delete;
+			Klist(Klist&& rhs) = delete;
+
+			Klist() = default;
 			ULONG size() const { return __size; }
 			iterator begin();
 			iterator end();
@@ -66,6 +100,7 @@ namespace kstd {
 			ULONG __size;
 			bool __inited;
 		private:
+			T&& move(T& v) const { return static_cast<T&&>(v); }
 #pragma warning(disable : 4996)
 			T* _alloc()const { return (T*)ExAllocatePoolWithTag(NonPagedPool, sizeof(T), POOL_TAG); };
 #pragma warning(default : 4996)
@@ -82,9 +117,43 @@ namespace kstd {
 			KeInitializeSpinLock(&__spinLock);
 		}
 
+		//移动语义支持
+		template<typename T>
+		inline bool Klist<T>::insert(T&& target, InsertType type) {
+			
+			auto ret = true;
+			auto irql = KIRQL{};
+			do {
+				auto node = _alloc();
+				if (node == nullptr) {
+					ret = false;
+					break;
+				}
+
+				*node = move(target);
+				KeAcquireSpinLock(&__spinLock, &irql);
+				switch (type)
+				{
+				case kstd::InsertType::head:
+					InsertHeadList(&this->__listHead, &node->link);
+					break;
+				case kstd::InsertType::tail:
+					InsertTailList(&this->__listHead, &node->link);
+					break;
+				default:
+					ret = false;
+					break;
+
+				}
+				KeReleaseSpinLock(&__spinLock, irql);
+			} while (false);
+			if (ret) __size++;
+
+			return ret;
+		}
 
 		template<typename T>
-		inline bool Klist<T>::insert(const T target, InsertType type)
+		inline bool Klist<T>::insert(const T& target, InsertType type)
 		{
 			auto ret = true;
 			auto irql = KIRQL{};
@@ -131,32 +200,37 @@ namespace kstd {
 			return iterator(nullptr,(void*)&__listHead);
 		}
 
+
+
 		template<typename T>
 		template<typename DestoryFunc>
 		inline void Klist<T>::destory(DestoryFunc func)
 		{
-			auto irql = KIRQL{};
+			using namespace list_inner;
 
+			auto irql = KIRQL{};
 			KeAcquireSpinLock(&__spinLock, &irql);
 			while (!IsListEmpty(&__listHead)) {
 
 				auto head = RemoveHeadList(&__listHead);
 				auto entry = CONTAINING_RECORD(head, T, link);
-				if (func != nullptr) {
-					//用户自定义清楚这个节点
-					func(entry);
+			
+				if constexpr (list_inner::is_same_v<DestoryFunc, std::nullptr_t>) {
+					//注意 msvc编译器如果显示调用析构函数，实际上是调用的
+					entry->~T();
 				}
 				else {
-					_free(entry);
+					func(entry);
 				}
-				
+
+				_free(entry);
 			}
 			KeReleaseSpinLock(&__spinLock, irql);
 		}
 
 		template<typename T>
 		template<typename CompareFunc>
-		inline T* Klist<T>::find(const T compare, CompareFunc func)
+		inline T* Klist<T>::find(const T& compare, CompareFunc func)
 		{
 			T* ret=nullptr;
 			auto irql = KIRQL{};
@@ -178,19 +252,20 @@ namespace kstd {
 
 		template<typename T>
 		template<typename CompareFunc>
-		inline T Klist<T>::remove(const T target, CompareFunc func)
+		inline void Klist<T>::remove(const T& target, CompareFunc func)
 		{
-			auto ret = T{};
+			using namespace list_inner;
 
 			auto f = find(target, func);
-			RemoveEntryList(&f->link);
-			if (f != nullptr) {
-				ret = *f;
-				_free(f);
-				__size--;
-			}
+			if (f == nullptr) return;
 
-			return ret;
+			RemoveEntryList(&f->link);
+			f->~T();/*调用析构函数*/
+			_free(f);
+			__size--;
+			
+
+			return;
 		}
 
 }
