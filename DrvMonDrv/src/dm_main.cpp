@@ -281,6 +281,12 @@ EXTERN_C NTSTATUS DriverEntry(PDRIVER_OBJECT drv,PUNICODE_STRING) {
 			break;
 		}
 
+		//Ìí¼Ó¸ö¹³×Ó²âÊÔ
+		addAHook(MmGetSystemRoutineAddress, (void*)(+[](PUNICODE_STRING us)->void* {
+			LOG_INFO("catch called MmGetSystemRoutineAddress,get func %ws\r\n", us->Buffer);
+			return MmGetSystemRoutineAddress(us);
+		}));
+
 	} while (0);
 	
 	

@@ -541,13 +541,36 @@ void fakeModuleDestory() {
 
 
 //添加一个hook
-//一旦成功添加了hook 那么原来模块的函数 jmp org_func就会被替换成ret
-//从而不会返回原始函数
-NTSTATUS addAHook(void* target_addr/*要hook的函数地址*/, void(*callback)(Context_t* regs, void* context), void* context) {
-	context;
-	auto status = STATUS_SUCCESS;
-	if (target_addr == nullptr || callback == nullptr) return STATUS_INVALID_PARAMETER;
-	return status;
+//目前是
+//mov rax,log func
+//call rax
+//mov rax,o_func
+//jmp o_func 所以如果要hook一个地方 只需要修改这个就行了
+NTSTATUS addAHook(void* target_addr/*要hook的函数地址*/, void* hook_addr) {
+	auto hook_module_base = (void*)0;
+	auto hook_module_name = getModuleNameByPtr((PVOID)target_addr, &hook_module_base);
+	FakeModuleEntry entry;
+
+	if (hook_module_base == nullptr) {
+		LOG_ERROR(" the address which needed to be hooked is not in any modules!\r\n");
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	auto rva = (ULONG_PTR)target_addr - (ULONG_PTR)hook_module_base;
+	rva += 14/*跳过前面的mov rax,call rax*/;
+
+	entry.org_base = (void*)hook_module_base;
+	auto fake_module = g_fake_modules.find(entry, [](const FakeModuleEntry& x, const FakeModuleEntry& y) {
+		return y.org_base == x.org_base;
+	});
+	
+	if (fake_module == nullptr) {
+		LOG_ERROR("the module which the address you given has not  be copied!\r\n");
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	*reinterpret_cast<void**>((ULONG_PTR)fake_module->fake_base + rva) = hook_addr;
+	return STATUS_SUCCESS;
 }
 
 //汇编调用过来 是C语言的函数声明 负责找下一个要去执行的函数 也就是维护的全局kavl

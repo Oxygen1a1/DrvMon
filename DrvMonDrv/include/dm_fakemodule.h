@@ -30,8 +30,24 @@ void fakeModuleDestory();
 
 NTSTATUS addAFakeModule(const kstd::kwstring& base_module_name);
 NTSTATUS addACheatDrv(PDRIVER_OBJECT drv);
-NTSTATUS addAHook(void* target_addr/*要hook的函数地址*/, void(*callback)(Context_t* regs, void* context), void* context);
+NTSTATUS addAHook(void* target_addr/*要hook的函数地址*/, void* hook_addr);
 void removeACheatDrv(PDRIVER_OBJECT drv);
+
+//通过context获取参数
+#define ARG1(context) context->mRcx
+#define ARG2(context) context->mRdx
+#define ARG3(context) context->mR8
+#define ARG4(context) context->mR9
+#define ARG5(context) (reinterpret_cast<ULONG_PTR*>(context->mRsp)[6])
+#define ARG6(context) (reinterpret_cast<ULONG_PTR*>(context->mRsp)[7])
+#define ARG7(context) (reinterpret_cast<ULONG_PTR*>(context->mRsp)[8])
+#define ARG8(context) (reinterpret_cast<ULONG_PTR*>(context->mRsp)[9])
+#define ARG9(context) (reinterpret_cast<ULONG_PTR*>(context->mRsp)[10])
+#define ARG10(context) (reinterpret_cast<ULONG_PTR*>(context->mRsp)[11])
+#define ARG11(context) (reinterpret_cast<ULONG_PTR*>(context->mRsp)[12])
+#define ARG12(context) (reinterpret_cast<ULONG_PTR*>(context->mRsp)[13])
+#define ARG13(context) (reinterpret_cast<ULONG_PTR*>(context->mRsp)[14])
+
 
 EXTERN_C void asm_func_log(void);
 #endif
