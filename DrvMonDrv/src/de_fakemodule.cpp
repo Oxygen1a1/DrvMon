@@ -562,5 +562,7 @@ extern "C" void dispatcherFunc(PContext_t context) {
 	auto rsp = reinterpret_cast<ULONG_PTR*>(context->mRsp);
 	auto called_va = rsp[0] - 12;
 	auto caller_va = rsp[1];
-	LOG_INFO("%p called %p\r\n", caller_va, called_va);
+
+	FLOG_INFO("%p\tcalled\t%p\r\n", caller_va, called_va);
+
 }

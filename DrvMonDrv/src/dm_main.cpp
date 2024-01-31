@@ -250,23 +250,26 @@ EXTERN_C NTSTATUS DriverEntry(PDRIVER_OBJECT drv,PUNICODE_STRING) {
 		kstd::DrvObjHookManager::getInstance()->destory();
 		kstd::InlineHookManager::getInstance()->destory();
 
+		kstd::Logger::destory();
 	};
 
 
 	do {
 
+		//init log
+		kstd::Logger::init("DrvMon",L"\\??\\C:\\DrvMon.txt");
 
 		//init image notify callback
 		status = PsSetLoadImageNotifyRoutine(ldImgCallback);
 		if (!NT_SUCCESS(status)) {
-			LOG_DEBUG("failed to setload image notify! errcode:%x\r\n",status);
+			LOG_ERROR("failed to setload image notify! errcode:%x\r\n",status);
 			break;
 		}
 
 		//init fakemodule 
 		status=fakeModuleInit();
 		if (!NT_SUCCESS(status)) {
-			LOG_DEBUG("failed to init fakemodule! errcode:%x\r\n", status);
+			LOG_ERROR("failed to init fakemodule! errcode:%x\r\n", status);
 			break;
 		}
 
@@ -274,7 +277,7 @@ EXTERN_C NTSTATUS DriverEntry(PDRIVER_OBJECT drv,PUNICODE_STRING) {
 		//add ntoskrnl.exe to fakemodule list
 		status=addAFakeModule(L"ntoskrnl.exe");
 		if (!NT_SUCCESS(status)) {
-			LOG_DEBUG("failed to add fakemodule module name:%s errcoce:%x\r\n", "ntoskrnl.exe", status);
+			LOG_ERROR("failed to add fakemodule module name:%s errcoce:%x\r\n", "ntoskrnl.exe", status);
 			break;
 		}
 
