@@ -29,21 +29,25 @@ namespace kstd {
 		};
 	public:
 		static NTSTATUS logPrint(LogLevel log_level, const char* function_name,const char* format, ...);
-		
+		static void getCurSystemTime(char* buf, size_t size);
 	private:
-
+		
 	};
 
 	NTSTATUS inline Logger::logPrint(LogLevel log_level, const char* function_name, const char* format, ...)
 	{
-		auto status =STATUS_SUCCESS;
+		auto status = STATUS_SUCCESS;
 		char log_message[412]{};
+		char time[100]{};
 		va_list args{};
 		va_start(args, format);
 
 		status = RtlStringCchVPrintfA(log_message, sizeof log_message, format, args);
 
 		va_end(args);
+
+		getCurSystemTime(time, sizeof time);
+		DbgPrintEx(77, 0, "%s\t", time);
 
 		if (NT_SUCCESS(status)) {
 			if (log_level == LogLevel::Debug) {
@@ -60,6 +64,19 @@ namespace kstd {
 		}
 
 		return status;
+	}
+
+	inline void Logger::getCurSystemTime(char* buf, size_t size)
+	{
+		LARGE_INTEGER sys_time{}, loacal_time{};
+		TIME_FIELDS time_fields{};
+
+		KeQuerySystemTime(&sys_time.QuadPart);
+		ExSystemTimeToLocalTime(&sys_time, &loacal_time);
+		RtlTimeToTimeFields(&loacal_time, &time_fields);
+		sprintf_s(buf, size, "[%4d-%2d-%2d %2d:%2d:%2d:%3d]", time_fields.Year, time_fields.Month, time_fields.Day,
+			time_fields.Hour, time_fields.Minute, time_fields.Second, time_fields.Milliseconds);
+
 	}
 
 
