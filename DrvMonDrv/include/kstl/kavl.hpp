@@ -147,6 +147,7 @@ namespace kstd{
 		auto ret = (T*)RtlInsertElementGenericTableAvl(__avl_table, (PVOID)&item, sizeof(T), nullptr);
 		//这个函数是浅拷贝,一定要自己手动拷贝一下
 		if (ret != nullptr) {
+			memset(ret, 0, sizeof(T));
 			*ret = item;
 			suc = true;
 		}
@@ -166,6 +167,7 @@ namespace kstd{
 		auto ret = (T*)RtlInsertElementGenericTableAvl(__avl_table, (PVOID)&item, sizeof(T), nullptr);
 		//这个函数是浅拷贝,一定要自己手动拷贝一下
 		if (ret != nullptr) {
+			memset(ret, 0, sizeof(T));
 			*ret = move(item);
 			suc = true;
 		}

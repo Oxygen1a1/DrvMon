@@ -128,7 +128,7 @@ struct FakeModuleEntry {
 	FakeModuleEntry(const FakeModuleEntry& rhs) = delete;
 	FakeModuleEntry& operator=(const FakeModuleEntry& rhs) = delete;
 	//移动语义必须要有
-	FakeModuleEntry(FakeModuleEntry&& rhs) {
+	FakeModuleEntry(FakeModuleEntry&& rhs) : base_name(nullptr) {
 		this->base_name = rhs.base_name;
 		this->fake_base = rhs.fake_base;
 		this->image_size = rhs.image_size;
@@ -519,9 +519,11 @@ void removeACheatDrv(PDRIVER_OBJECT drv) {
 	find.new_ldr = nullptr;
 	find.drv = drv;
 
+	//LOG_INFO("current cheat drv size:%d\r\n", g_cheats_drvs.size());
 	g_cheats_drvs.remove(find, [](const DriverCheatEntry& x,const DriverCheatEntry& y) {
 		return x.drv == y.drv;
 	});
+	//LOG_INFO("current cheat drv size:%d\r\n", g_cheats_drvs.size());
 }
 
 //fakemodule模块销毁 一般是最后一个销毁的
@@ -537,6 +539,7 @@ void fakeModuleDestory() {
 
 }
 
+
 //添加一个hook
 //一旦成功添加了hook 那么原来模块的函数 jmp org_func就会被替换成ret
 //从而不会返回原始函数
@@ -550,7 +553,9 @@ NTSTATUS addAHook(void* target_addr/*要hook的函数地址*/, void(*callback)(Context
 //汇编调用过来 是C语言的函数声明 负责找下一个要去执行的函数 也就是维护的全局kavl
 //会从kavl里面查找原始函数,如果没有,就记录一下,就返回
 extern "C" void dispatcherFunc(PContext_t context) {
-	
+	FakeModuleEntry entry;
+	auto rsp = reinterpret_cast<ULONG_PTR*>(context->mRsp);
+	auto caller_base = (void*)(0);
 	//context记录的堆栈目前是这样的
 	//|		  |
 	//|		  |
@@ -558,11 +563,50 @@ extern "C" void dispatcherFunc(PContext_t context) {
 	//|retadd1|
 	//retadd1 是 被欺骗的驱动调用iat的地址 直接引用即可;
 	//retadd2 是 假模块mov rax, call rax的地址,因此需要转换一下,其实就是[context.rsp]-12 才能得到函数头
-	
-	auto rsp = reinterpret_cast<ULONG_PTR*>(context->mRsp);
 	auto called_va = rsp[0] - 12;
 	auto caller_va = rsp[1];
 
-	FLOG_INFO("%p\tcalled\t%p\r\n", caller_va, called_va);
+	//通过called_va 在g_fake_modules中查找
+	entry.org_base = (void*)called_va;
+
+	auto fake_module = g_fake_modules.find(entry, [](const FakeModuleEntry& x, const FakeModuleEntry& y) {
+		auto caller = reinterpret_cast<ULONG_PTR>(x.org_base);
+
+		return ((UINT_PTR)y.fake_base <= caller && (ULONG_PTR)y.fake_base + y.image_size >= caller);
+	});
+
+	auto caller_module_name = getModuleNameByPtr((PVOID)caller_va,&caller_base);
+	
+	if (caller_module_name == L"unknow module") {
+		entry.org_base = (void*)called_va;
+		auto unknow_module =g_fake_modules.find(entry, [](const FakeModuleEntry& x, const FakeModuleEntry& y) {
+		auto caller = reinterpret_cast<ULONG_PTR>(x.org_base);
+
+		return ((UINT_PTR)y.fake_base <= caller && (ULONG_PTR)y.fake_base + y.image_size >= caller);
+		});
+
+		if (unknow_module != nullptr) {
+			caller_module_name = unknow_module->base_name;
+			caller_base = unknow_module->fake_base;
+		}
+	}
+
+	if (fake_module == nullptr) {
+		FLOG_ERROR("%p\tcalled unknow module:%p\r\n", caller_va, called_va);
+	}
+	else {
+		//计算出caller和called 的rva,以展示
+		auto caller_rva = caller_va - (ULONG_PTR)caller_base;
+		auto called_rva = called_va - (ULONG_PTR)fake_module->fake_base;
+		auto& called_module_name = fake_module->base_name;
+
+		//真正该call的地方,而不是假模块的地址,这里计算出来
+		auto really_called_va = (ULONG_PTR)fake_module->org_base + called_rva;
+
+		FLOG_INFO("%50ws + 0x%x (0x%p)\tcalled\t%15ws + 0x%x (0x%p)\r\n",
+		caller_module_name.c_str(),caller_rva, caller_va,
+		called_module_name.c_str(),called_rva, really_called_va);
+	}
+	
 
 }

@@ -102,7 +102,11 @@ namespace kstd {
 		private:
 			T&& move(T& v) const { return static_cast<T&&>(v); }
 #pragma warning(disable : 4996)
-			T* _alloc()const { return (T*)ExAllocatePoolWithTag(NonPagedPool, sizeof(T), POOL_TAG); };
+			T* _alloc()const { 
+				auto ret= (T*)ExAllocatePoolWithTag(NonPagedPool, sizeof(T), POOL_TAG);
+				if (ret) memset(ret, 0, sizeof(T));
+				return ret;
+			};
 #pragma warning(default : 4996)
 			void _free(T* buf) const { ExFreePool(buf); };
 		};

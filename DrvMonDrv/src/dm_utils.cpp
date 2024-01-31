@@ -7,6 +7,48 @@ void breakOnlyDebug() {
 
 }
 
+
+kstd::kwstring getModuleNameByPtr(PVOID p,PVOID* base,size_t* size) {
+	kstd::kwstring find_name{L"unknow module"};
+	ULONG needSize = 0;
+	ZwQuerySystemInformation(SystemModuleInformation, nullptr, 0, &needSize);
+	needSize *= 2;
+
+	auto info = reinterpret_cast<SYSTEM_MODULE_INFORMATION*>(ExAllocatePoolWithTag(NonPagedPool, needSize, 'temp'));
+	if (info == nullptr) {
+		LOG_ERROR("failed to alloa memory for sys infomation!\r\n");
+		return find_name;
+	}
+
+	do {
+
+		if (!NT_SUCCESS(ZwQuerySystemInformation(SystemModuleInformation, info, needSize, &needSize))) {
+			LOG_ERROR("failed to get system info!\r\n");
+			break;
+		}
+
+		for (size_t i = 0; i < info->Count; i++) {
+			SYSTEM_MODULE_ENTRY* module_entry = &info->Module[i];
+		
+			if ((ULONG_PTR)module_entry->BaseAddress <= (ULONG_PTR)(p) &&
+				(UINT_PTR)module_entry->BaseAddress + module_entry->Size >= (ULONG_PTR)(p)) {
+				wchar_t w_tmp[512]{};
+				s2w(module_entry->Name, w_tmp, sizeof w_tmp / sizeof wchar_t);
+				find_name = w_tmp;
+				if (MmIsAddressValid(size)) *size = module_entry->Size;
+				if (MmIsAddressValid(base)) *base = module_entry->BaseAddress;
+				break;
+			}
+		}
+
+	} while (false);
+
+	//clean up
+	if(MmIsAddressValid(info))
+		ExFreePool(info);
+	return find_name;
+}
+
 NTSTATUS w2s(const wchar_t* src, char* dest, size_t destSize) {
 
 	if (!src || !dest || destSize == 0)
@@ -72,6 +114,7 @@ auto find_module_base(const wchar_t* w_module_name, ULONG* size) -> void* {
 
 	auto info = reinterpret_cast<SYSTEM_MODULE_INFORMATION*>(
 		ExAllocatePoolWithTag(NonPagedPool, needSize, 'temp'));
+
 	if (info == nullptr) {
 		return nullptr;
 	}
@@ -88,17 +131,17 @@ auto find_module_base(const wchar_t* w_module_name, ULONG* size) -> void* {
 			SYSTEM_MODULE_ENTRY* module_entry = &info->Module[i];
 			if (strstr(module_entry->Name, module_name) != nullptr) {
 				findBase = module_entry->BaseAddress;
-				if (size != 0) {
 
-					*size = module_entry->Size;
-				}
+				if (MmIsAddressValid(size)) *size = module_entry->Size;
+				
 			}
 		}
 
 	} while (false);
-	ExFreePool(info);
 
-
+	//clean up
+	if(MmIsAddressValid(info))
+		ExFreePool(info);
 	return findBase;
 }
 

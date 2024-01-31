@@ -32,6 +32,11 @@ namespace kstd {
 		size_t find(const basic_string& rhs);
 		size_t find(const T* str);
 		
+		//rfind
+		size_t rfind(const T& c);
+		size_t rfind(const basic_string& rhs); //还未实现
+		size_t rfind(const T* str);
+
 		basic_string substr(size_t startPos, size_t endPos = npos/*如果这样,就一直到末尾*/);
 
 		const T* c_str() const { return __data; }
@@ -55,6 +60,11 @@ namespace kstd {
 	
 	template<typename T>
 	inline basic_string<T>& kstd::basic_string<T>::operator=(const basic_string& rhs) {
+		
+		//清空原来的,防止内存泄露
+		if (MmIsAddressValid(__data)) {
+			__free(__data);
+		}
 		//不考虑移动语义
 		__data = nullptr;
 		__size = 0;
@@ -229,6 +239,19 @@ namespace kstd {
 	}
 
 	template<typename T>
+	inline size_t basic_string<T>::rfind(const T& c)
+	{
+		auto ret = npos;
+		for (auto i = __size-1; i >=0; i--) {
+			if (__data[i] == c) {
+				ret = i;
+				break;
+			}
+		}
+		return ret;
+	}
+
+	template<typename T>
 	inline basic_string<T> basic_string<T>::substr(size_t startPos, size_t endPos)
 	{
 		do {
@@ -390,10 +413,11 @@ namespace kstd {
 	template<>
 	inline basic_string<wchar_t>& kstd::basic_string<wchar_t>::operator=(const wchar_t* str)
 	{
-		if (!MmIsAddressValid((PVOID)str)) return*this;
+		if (!MmIsAddressValid((PVOID)str)) return *this;
 
 		__size = 0;
-		__free(__data);
+		if(MmIsAddressValid(__data))
+			__free(__data);
 		__data = 0;
 		
 		auto size = (wcslen(str) + 1) * sizeof(wchar_t);
@@ -416,7 +440,8 @@ namespace kstd {
 		if (!MmIsAddressValid((PVOID)str)) return*this;
 
 		__size = 0;
-		__free(__data);
+		if(MmIsAddressValid(__data))
+			__free(__data);
 		__data = 0;
 
 		auto size = (strlen(str) + 1) * sizeof(char);
