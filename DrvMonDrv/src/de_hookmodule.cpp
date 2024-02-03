@@ -101,7 +101,7 @@ hkZwQuerySystemInformation(IN SYSTEM_INFORMATION_CLASS SystemInformationClass, O
 /*so we need progress this condition and return it's fake module base*/
 auto hkRtlPcToFileHeader(PVOID pc,PVOID* base)->PVOID {
 	auto ret = PVOID(nullptr);
-	__debugbreak();
+
 	auto org_address=fakeAddress2OrgAddress(pc);
 	if (org_address == nullptr) org_address = pc;/*that means we did not hook this module*/
 
