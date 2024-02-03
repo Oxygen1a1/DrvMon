@@ -4,6 +4,7 @@
 
 namespace kstd{
 
+	//if you want to use this container,must add this MICRO in your class
 #define MUSTADDED 		void operator delete(void* p, size_t s) { \
 	p,s; \
 	KeBugCheckEx(1, 1, 1, 1, 1); \

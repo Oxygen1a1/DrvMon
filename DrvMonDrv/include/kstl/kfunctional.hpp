@@ -1,4 +1,5 @@
 #pragma once
+//author :oxygen
 
 namespace kstd {
 #pragma warning(disable : 4996)

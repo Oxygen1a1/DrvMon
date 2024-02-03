@@ -12,10 +12,10 @@ kstd::kwstring getModuleNameByPtr(PVOID p,PVOID* base,size_t* size) {
 	kstd::kwstring find_name{L"unknow module"};
 	ULONG needSize = 0;
 	ZwQuerySystemInformation(SystemModuleInformation, nullptr, 0, &needSize);
-	needSize *= 2;
+	needSize += PAGE_SIZE;
 
 	auto info = reinterpret_cast<SYSTEM_MODULE_INFORMATION*>(ExAllocatePoolWithTag(NonPagedPool, needSize, 'temp'));
-	if (info == nullptr) {
+	if (!MmIsAddressValid(info)) {
 		LOG_ERROR("failed to alloa memory for sys infomation!\r\n");
 		return find_name;
 	}
@@ -129,11 +129,18 @@ auto find_module_base(const wchar_t* w_module_name, ULONG* size) -> void* {
 
 		for (size_t i = 0; i < info->Count; i++) {
 			SYSTEM_MODULE_ENTRY* module_entry = &info->Module[i];
-			if (strstr(module_entry->Name, module_name) != nullptr) {
+			char* last_slash = strrchr(module_entry->Name, '\\');
+			if (last_slash != nullptr) {
+				last_slash++; // Skip the slash
+			}
+			else {
+				last_slash = module_entry->Name;
+			}
+			
+			if (_strnicmp(last_slash, module_name,strlen(module_name)) ==0/*ingore char senstive*/) {
 				findBase = module_entry->BaseAddress;
-
 				if (MmIsAddressValid(size)) *size = module_entry->Size;
-				
+				break;
 			}
 		}
 

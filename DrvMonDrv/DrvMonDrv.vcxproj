@@ -92,6 +92,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\dm_fakemodule.h" />
+    <ClInclude Include="include\dm_hookmodule.h" />
     <ClInclude Include="include\dm_ref.hpp" />
     <ClInclude Include="include\dm_utils.h" />
     <ClInclude Include="include\kstl\karray.hpp" />

@@ -4,6 +4,7 @@
 #define _DM_REF_
 
 #include <fltKernel.h>
+#include <ntstrsafe.h>
 
 #include <kstl/kpe_parse.hpp>
 #include <kstl/ksystem_info.hpp>
@@ -93,8 +94,14 @@ extern "C" {
 		PVOID SystemInformation,
 		ULONG SystemInformationLength,
 		PULONG ReturnLength);
-};
+	NTKERNELAPI NTSTATUS NTAPI NtQuerySystemInformation(
+		IN SYSTEM_INFORMATION_CLASS SystemInformationClass,
+		OUT PVOID SystemInformation,
+		IN ULONG SystemInformationLength,
+		OUT PULONG ReturnLength OPTIONAL);
 
+	NTKERNELAPI PVOID RtlPcToFileHeader(PVOID pc, PVOID* base);
+};
 
 
 

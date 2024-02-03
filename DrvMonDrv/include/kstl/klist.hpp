@@ -4,6 +4,7 @@
 /// <summary>
 /// author :oxygen
 /// 这个是线程安全的  必须先初始化
+/// this is thread-safty list,but must init first
 /// </summary>
 
 

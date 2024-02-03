@@ -18,6 +18,17 @@ void removeFakeLoaedModuleList(PLDR_DATA_TABLE_ENTRY entry);
 PLDR_DATA_TABLE_ENTRY insertFakeLoadedModuleList(PLDR_DATA_TABLE_ENTRY entry, bool is_copy = true);
 NTSTATUS initFakeLloadedModuleList();
 
+//check is good opcode's first byte
+#define isGoodOpcode(byte) (	\
+(byte>=0x50 && byte<=0x57) ||	\
+byte==0x41 ||	\
+byte==0x48 || \
+byte==0x4c || \
+byte==0x49 || \
+byte==0x4d \
+)
+
+
 struct FakeModuleEntry {
 	//这个东西必须加,如果想要使用kstl的容器,这个是必须加的,不然没有办法析构!
 	//因为我没有实现全局的new,所以delete调用一律蓝屏;
@@ -47,13 +58,50 @@ struct FakeModuleEntry {
 				0xff,0xe0//jmp rax(jmp to original func) 
 			};
 
-			if (end_rva - start_rva < sizeof jmp_code) return;/*函数太小,以至于不能hook*/
+			if (end_rva - start_rva < sizeof jmp_code) return;/*too small to can not hook*/
 
 			auto _this = reinterpret_cast<FakeModuleEntry*>(context);
 
-			//有时候这个异常表会抽风...不是函数开始rva,这里取个巧,往上找 找到第一个0xcc,把他当成函数头 当然可能会存在误判
-			while (*((PUCHAR)(_this->fake_base) + start_rva) != 0xcc) start_rva--;
-			start_rva++;
+			//get funtions start,it'll a big problem
+
+			//that's may still get error function head,looking following code,even though we skip the 0xcc to the function's head,but -
+			// actually,000000014040103 is what we really needed,so we also should check -
+			// the Is the address align with 0x10
+			
+			//.text:0000000140401027 CC CC CC CC CC CC 0F 1F + align 10h
+			//.text : 0000000140401030; Exported entry 370. ExpInterlockedPopEntrySList
+			
+			// however...that's also will get error function head...
+			//fffff801`5fb636ab cc              int     3
+			//nt!KiInitializeMutant:
+			//fffff801`5fb636ac 48896c2408      mov     qword ptr[rsp + 8], rbp
+
+			/*while ((start_rva & 0xf) != 0) start_rva++;*/
+
+			//so I decide to use the following check way
+			//1.get first 0xcc
+			//2.if not align with 0x10,check it's byte,if is 0x48,assume it's function head
+			//3.if not begin with 0x48,start_rva++ untill to align with 0x10
+			if (*((PUCHAR)(_this->fake_base) + start_rva - 1) != 0xcc) {
+
+				//if not begin with 0xcc,skip all the bytes untill to 0xcc
+				while (*((PUCHAR)(_this->fake_base) + start_rva) != 0xcc) start_rva--;
+				start_rva++;
+
+				//then check if align with 0x10
+				//if not,check it begin with 0x48
+				//没有对齐,那么就判断一下是不是 push,mov 这些开头的opcode 如果是,那么不变,如果不是,start_rva++直到0x10对齐
+				//then check if begin with 0x48 0x55 0x51 0x40
+				//if it is,that's probably function head
+				if ((start_rva & 0xf) != 0) { 
+
+					if (!isGoodOpcode(*((PUCHAR)(_this->fake_base) + start_rva))) while ((start_rva & 0xf) != 0) start_rva++;
+
+
+				}
+
+				//如果0x10对齐,那么姑且就不动了;
+			}
 
 			*reinterpret_cast<UINT_PTR*>(jmp_code + 2) = (UINT_PTR)asm_func_log;
 			*reinterpret_cast<UINT_PTR*>(jmp_code + 14) = start_rva + (ULONG_PTR)_this->org_base;
@@ -105,7 +153,7 @@ struct FakeModuleEntry {
 		} while (false);
 
 		if (!NT_SUCCESS(status)) {
-			if (!fake_base) {
+			if (MmIsAddressValid(fake_base)) {
 				ExFreePool(fake_base);
 				fake_base = nullptr;
 			}
@@ -157,7 +205,7 @@ struct DriverCheatEntry {
 
 	PDRIVER_OBJECT drv;
 	PLDR_DATA_TABLE_ENTRY org_ldr;
-	PLDR_DATA_TABLE_ENTRY new_ldr;/*为了欺骗驱动*/
+	PLDR_DATA_TABLE_ENTRY new_ldr;/*for cheating drivers*/
 	kstd::kwstring full_path;
 	LIST_ENTRY link;
 	NTSTATUS status;
@@ -186,7 +234,7 @@ struct DriverCheatEntry {
 
 			if (find_entry == nullptr) {
 				//fatal error
-				LOG_ERROR("failed to find module:%ws\r\n", w_base_name); /*说明还没有为这个添加假模块*/
+				LOG_ERROR("failed to find module:%ws\r\n", w_base_name); /*that means this func locating module not be copied*/
 				breakOnlyDebug();
 				return;
 			}
@@ -196,20 +244,21 @@ struct DriverCheatEntry {
 			if (addr == 0) {
 				LOG_ERROR("failed to get func %s addr\r\n", func_name);
 				breakOnlyDebug();
+				return;
 			}
 
-			//名字导入 这个有个很逆天的BUG..触发条件极其苛刻 但是也可能会触发
-			//1.函数是no excpet的叶函数 在pdata节区没有记录 但是这种函数一般较小，直接用假模块的也没啥关系
-			//2.但是，正好内存比较小，导致ntos的换页，就比较尴尬了 这个时候是没复制成功的!
-			//3.这个时候直接会BSOD!,所以战略性放弃这种逆天函数,因为一般这种函数都是什么PsGetThreadTeb无关紧要的函数
-			//4.在之前 假模块的内容被我RtlSecureZero了，我只需要判断一下这个地方是不是字节0 如果是,说明没复制
-			//那么就直接用原来的就行 这种小函数漏了就漏了
+			//This has a very weird BUG. The triggering conditions are extremely harsh, but it may also be triggered.
+			//1. The function is a leaf function of no excpet. There is no record in the pdata section. However, this kind of function is generally small, so it doesn’t matter if you use the fake module directly.
+			//2. However, the memory happens to be relatively small, which causes ntos page change, which is more embarrassing. At this time, the copy is not successful!
+			//3. BSOD will occur directly at this time!, so strategically abandon this incredible shit dick function, because generally this function is an irrelevant function like PsGetThreadTeb
+			//4. Before, the content of the fake module was set value `0xcc` by memset. I only need to determine whether this place is byte OXCC. If so, it means that it was not copied.
+			//Then just use the original one. If this small function is missing, it will be missed.
 			if (*(PUCHAR)addr == '\xcc') {
 				//说明没有复制
 				LOG_INFO("whatever,for some reasons,func %s from module %s not be copied!\r\n", func_name, dllname);
 			}
 			else {
-				// *iat = addr; × 这个地址不可写
+				// *iat = addr; × because this address is read-only
 				_memcpy(iat, &addr, sizeof addr);
 			}
 
@@ -234,24 +283,22 @@ struct DriverCheatEntry {
 				break;
 			}
 
-			//拷贝过去
 			memcpy(new_ldr, org_ldr, sizeof LDR_DATA_TABLE_ENTRY);
 
 			full_path = org_ldr->FullDllName.Buffer;
-
-			//同时插入自己维护的假的PsLoadedModuleList 注意,这个生命周期是我管理的，因此不拷贝
+			//at same time insert global fake PsLoadedModuleList,attention,
+			//I will control this LDR_ENTRY,so do not copy it to fake PsLoadedModuleList
 			insertFakeLoadedModuleList(new_ldr,false);
-			//根据fakemodule,进行修改iat
+			//Modify iat according to fakemodule
 			iatSwift(g_fake_modules);
-
-			//修改这个驱动的Ldr
+			//modify driver's ldr to cheat drv
 			drv->DriverSection = new_ldr;
 		} while (false);
 
 
 		if (!NT_SUCCESS(status)) {
 			if (MmIsAddressValid(new_ldr)) {
-				//先修改驱动的ldr
+
 				drv->DriverSection = org_ldr;
 				removeFakeLoaedModuleList(new_ldr);
 				ExFreePool(new_ldr);
@@ -264,7 +311,7 @@ struct DriverCheatEntry {
 
 		if (!MmIsAddressValid(new_ldr) || !MmIsAddressValid(drv) || !MmIsAddressValid(org_ldr)) return;
 
-		//先修改驱动的ldr
+		//resume driver's ldr to avoid to bsod
 		drv->DriverSection = org_ldr;
 		removeFakeLoaedModuleList(new_ldr);
 		ExFreePool(new_ldr);
@@ -272,11 +319,10 @@ struct DriverCheatEntry {
 		
 	}
 
-	//拷贝构造删除
+
 	DriverCheatEntry(const DriverCheatEntry& rhs) = delete;
 	DriverCheatEntry& operator=(const DriverCheatEntry& rhs) = delete;
 
-	//移动语义有
 	DriverCheatEntry(DriverCheatEntry&& rhs) {
 		this->drv = rhs.drv;
 		this->full_path = rhs.full_path;
@@ -309,35 +355,104 @@ struct DispatcherEntry {
 };
 
 
-//维护iat hook的驱动
+//maintians the gloal list which contained all the cheated driver module 
 kstd::Klist<DriverCheatEntry> g_cheats_drvs;
 
-//维护一个分发器 主要是用来hook函数的
+//<discord>
 kstd::kavl<DispatcherEntry> g_hook_dispatcher;
 
 //ONLY SUPPORT above WIN10 
-//这个东西读PsLoadedModuleList的时候要加锁!
 EXTERN_C ERESOURCE* PsLoadedModuleResource;
 
 
-PLDR_DATA_TABLE_ENTRY findFakeLoadedModuleList(const kstd::kwstring& base_module_name) {
+PVOID fakeAddress2OrgAddress(PVOID fake_address) {
+
+	FakeModuleEntry fake_entry;
+	fake_entry.fake_base = fake_address;
+
+	auto fake_module = g_fake_modules.find(fake_entry, [](const FakeModuleEntry& x, const FakeModuleEntry& y) {
+		return (y.fake_base <= x.fake_base && (UINT_PTR)y.fake_base + y.image_size >= (UINT_PTR)x.fake_base);
+	});
+
+
+	if (fake_module == nullptr) return nullptr;
+	else return reinterpret_cast<PVOID>((UINT_PTR)fake_address - (UINT_PTR)fake_module->fake_base + (UINT_PTR)fake_module->org_base);
+
+}
+
+PVOID OrgAddress2fakeAddress(PVOID org_address) {
+	FakeModuleEntry fake_entry;
+	fake_entry.org_base = org_address;
+
+	auto fake_module = g_fake_modules.find(fake_entry, [](const FakeModuleEntry& x, const FakeModuleEntry& y) {
+		return (y.org_base <= x.org_base && (UINT_PTR)y.org_base + y.image_size >= (UINT_PTR)x.org_base);
+	});
+
+
+	if (fake_module == nullptr) return nullptr;
+	else return reinterpret_cast<PVOID>((UINT_PTR)org_address - (UINT_PTR)fake_module->org_base + (UINT_PTR)fake_module->fake_base);
+
+	
+}
+
+//get fake PLDR_DATA_TABLE_ENTRY according the address(address is really addess in org modules)
+PLDR_DATA_TABLE_ENTRY findFakeLoadedModuleList(void* address) {
+	FakeModuleEntry fake_entry;
 	auto find = PLDR_DATA_TABLE_ENTRY{ nullptr };
+
+	fake_entry.org_base = address;
+	//first,we need to get fake base according module really base
+	auto fake_module = g_fake_modules.find(fake_entry, [](const FakeModuleEntry& x, const FakeModuleEntry& y) {
+		return (y.org_base <= x.org_base && (UINT_PTR)y.org_base+y.image_size>=(UINT_PTR)x.org_base);
+	});
+
+	if (fake_module == nullptr) return nullptr;
+
+	//if find copied module,get it's fake base
+	address = fake_module->fake_base;
 
 	kstd::AutoLock<kstd::SpinLock> spinlock(&g_fake_loadedmodule_lock);
 
-	//因为这个是没有链表头的,所以得这样遍历
 	for (auto link = &g_fake_loadedmodule.InLoadOrderLinks; ; ) {
 		auto entry = CONTAINING_RECORD(link, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-		
-		if (base_module_name==entry->BaseDllName.Buffer) {
+
+		if (address == entry->DllBase) {
 			//find
 			find = entry;
 			break;
 		}
 
-		if (link == &g_fake_loadedmodule.InLoadOrderLinks) break;
 
 		link = link->Flink;
+
+		if (link == &g_fake_loadedmodule.InLoadOrderLinks) break;
+
+	}
+
+	return find;
+}
+
+//at same time,this func can be called by externl module,like de_hookmodule
+PLDR_DATA_TABLE_ENTRY findFakeLoadedModuleList(const kstd::kwstring& base_module_name) {
+	auto find = PLDR_DATA_TABLE_ENTRY{ nullptr };
+
+	kstd::AutoLock<kstd::SpinLock> spinlock(&g_fake_loadedmodule_lock);
+
+	for (auto link = &g_fake_loadedmodule.InLoadOrderLinks; ; ) {
+		auto entry = CONTAINING_RECORD(link, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+		
+		//if (base_module_name==entry->BaseDllName.Buffer/*we need ingore senstive*/) {
+		//
+		//}
+
+		if (_wcsnicmp(base_module_name.c_str(), entry->BaseDllName.Buffer,wcslen(entry->BaseDllName.Buffer))==0) {
+			//find
+			find = entry;
+			break;
+		}
+
+		link = link->Flink;
+		if (link == &g_fake_loadedmodule.InLoadOrderLinks) break;
 	}
 
 	return find;
@@ -468,7 +583,6 @@ NTSTATUS addAFakeModule(const kstd::kwstring& base_module_name) {
 		return STATUS_FAIL_FAST_EXCEPTION;
 	}
 
-
 	//同时修改自己维护的假的PsLoadedModuleList
 	auto fake_ldr = findFakeLoadedModuleList(base_module_name);
 	if (!fake_ldr) {
@@ -573,6 +687,34 @@ NTSTATUS addAHook(void* target_addr/*要hook的函数地址*/, void* hook_addr) {
 	return STATUS_SUCCESS;
 }
 
+//本来是想采用PDB的,但是感觉也没啥必要,大部分人调用的还都是导出函数，如果未导出，记录一下rva现查就行了
+kstd::kstring getFuncNameFromExportByPtr(void* address) {
+	auto caller_base = (void*)0;
+	auto size = 0ull;
+	kstd::kstring ret = "not found";
+
+	getModuleNameByPtr((PVOID)address, &caller_base,&size);
+	if (caller_base == nullptr) return ret;
+
+	struct input_t {
+		ULONG rva;/*in*/
+		char func_name[100];/*out*/
+	};
+
+	input_t tmp = { (ULONG)((ULONG_PTR)address - (ULONG_PTR)caller_base),{} };
+	kstd::ParsePE parse_pe(caller_base, size);
+
+	//遍历export table 然后对比rva,
+	parse_pe.enumrateExportTable(caller_base, [](char* name, int index, PSHORT ord_table, PULONG func_table, void* context) {
+		if (func_table[ord_table[index]] == ((input_t*)context)->rva) strcpy_s(((input_t*)context)->func_name, name);		
+	}, & tmp);
+
+
+	if (tmp.func_name[0] != 0) ret = tmp.func_name;
+	return ret;
+
+}
+
 //汇编调用过来 是C语言的函数声明 负责找下一个要去执行的函数 也就是维护的全局kavl
 //会从kavl里面查找原始函数,如果没有,就记录一下,就返回
 extern "C" void dispatcherFunc(PContext_t context) {
@@ -599,7 +741,6 @@ extern "C" void dispatcherFunc(PContext_t context) {
 	});
 
 	auto caller_module_name = getModuleNameByPtr((PVOID)caller_va,&caller_base);
-	
 	if (caller_module_name == L"unknow module") {
 		entry.org_base = (void*)called_va;
 		auto unknow_module =g_fake_modules.find(entry, [](const FakeModuleEntry& x, const FakeModuleEntry& y) {
@@ -626,9 +767,16 @@ extern "C" void dispatcherFunc(PContext_t context) {
 		//真正该call的地方,而不是假模块的地址,这里计算出来
 		auto really_called_va = (ULONG_PTR)fake_module->org_base + called_rva;
 
-		FLOG_INFO("%50ws + 0x%x (0x%p)\tcalled\t%15ws + 0x%x (0x%p)\r\n",
-		caller_module_name.c_str(),caller_rva, caller_va,
-		called_module_name.c_str(),called_rva, really_called_va);
+		auto called_func_name = getFuncNameFromExportByPtr((void*)(really_called_va));
+		
+		if (called_func_name == "not found") FLOG_INFO("%50ws + 0x%x (0x%p)\tcalled\t%15ws + 0x%x (0x%p)\r\n",
+				caller_module_name.c_str(), caller_rva, caller_va,
+				called_module_name.c_str(), called_rva, really_called_va);
+		
+		else FLOG_INFO("%50ws + 0x%x (0x%p)\tcalled\t%15ws + 0x%x (0x%p)(%s)\r\n",
+				caller_module_name.c_str(), caller_rva, caller_va,
+				called_module_name.c_str(), called_rva, really_called_va,called_func_name.c_str());
+	
 	}
 	
 

@@ -30,10 +30,14 @@ void fakeModuleDestory();
 
 NTSTATUS addAFakeModule(const kstd::kwstring& base_module_name);
 NTSTATUS addACheatDrv(PDRIVER_OBJECT drv);
-NTSTATUS addAHook(void* target_addr/*要hook的函数地址*/, void* hook_addr);
+NTSTATUS addAHook(void* target_addr/*need to hook functions address*/, void* hook_addr);
 void removeACheatDrv(PDRIVER_OBJECT drv);
+PLDR_DATA_TABLE_ENTRY findFakeLoadedModuleList(const kstd::kwstring& base_module_name);
+PLDR_DATA_TABLE_ENTRY findFakeLoadedModuleList(void* address);
+PVOID fakeAddress2OrgAddress(PVOID fake_address);
+PVOID OrgAddress2fakeAddress(PVOID org_address);
 
-//通过context获取参数
+//through registion context to get arguments
 #define ARG1(context) context->mRcx
 #define ARG2(context) context->mRdx
 #define ARG3(context) context->mR8

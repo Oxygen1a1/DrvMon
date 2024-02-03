@@ -84,6 +84,9 @@
     <ClInclude Include="include\dm_utils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\dm_hookmodule.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="src\de_asm_fakemodule.asm">

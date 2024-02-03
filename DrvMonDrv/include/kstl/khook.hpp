@@ -3,6 +3,8 @@
 #include <intrin.h>
 #include <ntimage.h>
 
+//a simple kernel hook lib
+//current contain driver object hook and kernel inline hook
 namespace kstd {
 
 	extern "C" {

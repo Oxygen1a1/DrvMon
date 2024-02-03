@@ -2,7 +2,7 @@
 #ifndef _KLOG_H_
 #define  _KLOG_H_
 
-//a vert simple log lib
+//a very simple log lib
 //author:oxygen
 
 #include <fltKernel.h>
@@ -108,7 +108,7 @@ namespace kstd {
 
 			RtlStringCchCatA(full_log_message, sizeof full_log_message, log_message);
 
-			if (log_level & LogLevel::ToFile) {
+			if (log_level & LogLevel::ToFile && KeGetCurrentIrql()==PASSIVE_LEVEL) {
 				IO_STATUS_BLOCK ioStatusBlock;
 				LARGE_INTEGER offset;
 				offset.QuadPart = __offset;

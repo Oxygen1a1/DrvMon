@@ -5,6 +5,7 @@
 #include <fltKernel.h>
 #include <ntstrsafe.h>
 #include <ntimage.h>
+//author oxygen & hambaga
 /*用于解析存储在磁盘上的文件或者是已经在内存中的文件*/
 /*提供
 1.枚举导出表 √

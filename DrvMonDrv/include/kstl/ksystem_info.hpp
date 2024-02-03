@@ -3,7 +3,7 @@
 /// <summary>
 /// in this head file you can get 
 ///some windows kernel global var address or some system tools like bypass sign check and so on
-///  
+///  author : oxygen
 /// 
 /// </summary>
 namespace kstd {

@@ -41,17 +41,6 @@ namespace kstd {
 		}
 	};
 
-	//偏特化 去调用
-	//template<typename T>
-	//struct DefaultDeleter<T[]> {
-
-	//};
-	//可以具体全特化 某些特定的,比如HANDLE 
-	//template<>
-	//struct DefaultDeleter<HANDLE> {
-
-	//};
-
 	template<class T, class Deleter = DefaultDeleter<T>>
 	struct unique_ptr {
 
