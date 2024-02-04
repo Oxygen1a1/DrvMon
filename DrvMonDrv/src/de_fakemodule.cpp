@@ -1,16 +1,16 @@
 #include <dm_fakemodule.h>
 
-//用于产生 和 保存内核重载的模块
-//维护相关数据结构
-//同时维护一个二叉树,这个二叉树是一个分发器,分发器负责找到hookmodule这个模块添加的hook
-//fakemodule还有一个asm的文件,也是属于fakemodule模块,主要是负责保存寄存器环境 跳到fakemodule.dispatcherFunc中
 
+//Module used to generate and save kernel reloads
+//Maintain related data structures
+//Maintain a binary tree at the same time. This binary tree is a distributor. The distributor is responsible for finding the hooks added by the hookmodule module.
+//Fakemodule also has an asm file, which also belongs to the fakemodule module. It is mainly responsible for saving the register environment. Jump to fakemodule.dispatcherFunc.
 
 const unsigned pool_tag = 'fkMd';
 
-//自己维护的假的PsLoadedModuleList
+//Fake PsLoadedModuleList
 LDR_DATA_TABLE_ENTRY g_fake_loadedmodule;
-//自己维护的假的PsLoadedModuleList lock
+//Fake PsLoadedModuleList lock
 KSPIN_LOCK g_fake_loadedmodule_lock;
 
 PLDR_DATA_TABLE_ENTRY findFakeLoadedModuleList(const kstd::kwstring& base_module_name);
@@ -30,8 +30,6 @@ byte==0x4d \
 
 
 struct FakeModuleEntry {
-	//这个东西必须加,如果想要使用kstl的容器,这个是必须加的,不然没有办法析构!
-	//因为我没有实现全局的new,所以delete调用一律蓝屏;
 	MUSTADDED
 	kstd::kwstring base_name;
 	void* fake_base;
@@ -48,7 +46,7 @@ struct FakeModuleEntry {
 		}
 
 		kstd::ParsePE ppe(org_base, image_size);
-		//遍历当前模块的所有函数 然后得到rva,让假模块对应的函数jmp到
+		//emumrate all the functions of module,then get the rva,hook copied module functions and jmp to really functions
 		ppe.enumrateFuncs(ppe._base, [](ULONG start_rva,ULONG end_rva,void* context) ->void {
 			
 			unsigned char jmp_code[] = {
@@ -89,27 +87,23 @@ struct FakeModuleEntry {
 				start_rva++;
 
 				//then check if align with 0x10
-				//if not,check it begin with 0x48
-				//没有对齐,那么就判断一下是不是 push,mov 这些开头的opcode 如果是,那么不变,如果不是,start_rva++直到0x10对齐
-				//then check if begin with 0x48 0x55 0x51 0x40
-				//if it is,that's probably function head
+				//if not,check it begin with good opcode
+				//if it is,that's probably function head.if not,start_rva dec untill align with 0x10
 				if ((start_rva & 0xf) != 0) { 
 
 					if (!isGoodOpcode(*((PUCHAR)(_this->fake_base) + start_rva))) while ((start_rva & 0xf) != 0) start_rva++;
 
-
 				}
 
-				//如果0x10对齐,那么姑且就不动了;
 			}
 
 			*reinterpret_cast<UINT_PTR*>(jmp_code + 2) = (UINT_PTR)asm_func_log;
 			*reinterpret_cast<UINT_PTR*>(jmp_code + 14) = start_rva + (ULONG_PTR)_this->org_base;
 
-			//这里是可以修改的,因为申请的内存可执行,可读,可写
+			//this address we can modify directly because the memory is rwx
 			memcpy((PUCHAR)(_this->fake_base) + start_rva, jmp_code, sizeof jmp_code);
 
-
+			
 		},this);
 
 		return STATUS_SUCCESS;
@@ -144,7 +138,7 @@ struct FakeModuleEntry {
 				}
 			}
 
-			//拷贝完成之后,开始进行hook 模块的所有函数,让他jmp 到真正的函数地址
+			//when the copy done,we start to hook all the function of the module, 
 			status=hookFakeModuleFuns();
 			if (!NT_SUCCESS(status)) {
 				break;
@@ -172,10 +166,10 @@ struct FakeModuleEntry {
 		}
 	}
 
-	//拷贝构造删除!
+	//delete copy ctor and copy operator 
 	FakeModuleEntry(const FakeModuleEntry& rhs) = delete;
 	FakeModuleEntry& operator=(const FakeModuleEntry& rhs) = delete;
-	//移动语义必须要有
+
 	FakeModuleEntry(FakeModuleEntry&& rhs) : base_name(nullptr) {
 		this->base_name = rhs.base_name;
 		this->fake_base = rhs.fake_base;
@@ -197,7 +191,7 @@ struct FakeModuleEntry {
 
 };
 
-//维护假模块的全局变量 线程安全的
+//maintian fakemodule global list and it's thread-safty
 kstd::Klist<FakeModuleEntry> g_fake_modules;
 
 struct DriverCheatEntry {
@@ -465,12 +459,11 @@ void removeFakeLoaedModuleList(PLDR_DATA_TABLE_ENTRY entry) {
 	RemoveEntryList(&(entry->InLoadOrderLinks));
 }
 
-//接受一个entry,拷贝他,然后连接到维护的假的,同时返回插入到的地方
+//accept a entry,if argument 2 set true,will copied and insert fake PsLoadedModuleList else will directly insert it to the list
 PLDR_DATA_TABLE_ENTRY insertFakeLoadedModuleList(PLDR_DATA_TABLE_ENTRY entry,bool is_copy) {
 	
 	PLDR_DATA_TABLE_ENTRY ldr_entry = nullptr;
 	if (!MmIsAddressValid(entry)) return nullptr;
-	//先申请一块内存用于插入到这个链接
 	
 	if (is_copy) {
 		ldr_entry = reinterpret_cast<PLDR_DATA_TABLE_ENTRY>(ExAllocatePoolWithTag(NonPagedPool, sizeof LDR_DATA_TABLE_ENTRY, pool_tag));
@@ -481,7 +474,7 @@ PLDR_DATA_TABLE_ENTRY insertFakeLoadedModuleList(PLDR_DATA_TABLE_ENTRY entry,boo
 		ldr_entry = entry;
 	}
 
-	//获取锁
+	//auto lock raii
 	kstd::AutoLock<kstd::SpinLock> _autolock(&g_fake_loadedmodule_lock);
 	InsertTailList(&(g_fake_loadedmodule.InLoadOrderLinks), &(ldr_entry->InLoadOrderLinks));
 
@@ -492,7 +485,7 @@ NTSTATUS initFakeLloadedModuleList() {
 	auto ldr = reinterpret_cast<PLDR_DATA_TABLE_ENTRY>(kstd::SysInfoManager::getInstance()->getSysInfo()->PsLoadedModuleList);
 	if (ldr == nullptr) return STATUS_NOT_SUPPORTED;
 
-	//获取锁 遍历
+	//raii auto lock
 	kstd::AutoLock<kstd::Resource> autolock(PsLoadedModuleResource);
 
 	for ( auto link=ldr->InLoadOrderLinks.Flink;link!=&ldr->InLoadOrderLinks;link=link->Flink) {
@@ -500,14 +493,14 @@ NTSTATUS initFakeLloadedModuleList() {
 		
 		if (kstd::kwstring(entry->BaseDllName.Buffer) == L"ntoskrnl.exe") {
 			kstd::AutoLock<kstd::SpinLock> spinlock(&g_fake_loadedmodule_lock);
-			//这个比较特殊 直接拷贝
+			//ntoskrnl.exe we need  a speical treatment
 			auto org_link = g_fake_loadedmodule.InLoadOrderLinks;
 			memcpy(&g_fake_loadedmodule, entry, sizeof LDR_DATA_TABLE_ENTRY);
-			g_fake_loadedmodule.InLoadOrderLinks = org_link;/*要恢复回来,不然链表会损坏*/
+			g_fake_loadedmodule.InLoadOrderLinks = org_link;/*resume to avoid to list corrupt*/
 			continue;
 		}
 		
-		//获取自己维护的假的PsLoadedModuleList锁,同时将这个entry插入
+		//insert to fake PsLoadedModuleList 
 		insertFakeLoadedModuleList(entry);
 
 	}
@@ -565,7 +558,7 @@ NTSTATUS fakeModuleInit() {
 
 }
 
-//添加到g_fake_modules中
+//add a fakemodule
 NTSTATUS addAFakeModule(const kstd::kwstring& base_module_name) {
 
 	FakeModuleEntry entry(base_module_name);
@@ -574,7 +567,6 @@ NTSTATUS addAFakeModule(const kstd::kwstring& base_module_name) {
 		return entry.status;
 	}
 	
-	//插入到全局维护的链表中
 	auto new_base = entry.fake_base;
 
 	auto inserted=g_fake_modules.insert(kstd::move(entry), kstd::InsertType::tail);
@@ -583,10 +575,10 @@ NTSTATUS addAFakeModule(const kstd::kwstring& base_module_name) {
 		return STATUS_FAIL_FAST_EXCEPTION;
 	}
 
-	//同时修改自己维护的假的PsLoadedModuleList
+	//modify it's entry in fake PsLoadedModuleList
 	auto fake_ldr = findFakeLoadedModuleList(base_module_name);
 	if (!fake_ldr) {
-		//不应该发生
+		//fatal error if occurs
 		LOG_ERROR("failed to find module:%ws in fake PsLoadedModule List\r\n", base_module_name.c_str());
 		
 	}else fake_ldr->DllBase = new_base;
@@ -594,9 +586,8 @@ NTSTATUS addAFakeModule(const kstd::kwstring& base_module_name) {
 	return STATUS_SUCCESS;
 }
 
-//一个驱动加载(image callback中 到这,我会修改Ldr 并把它放到g_cheats_drvs)
-//同时我会根据此时的g_fake_modules来进行修改iat 同时有一个分发器 de_log中
-//一般是要放在DrvEntry中!也就是hook DrvEntry回调
+
+/*when a driver loaded,call this function,and it will modify the driver's driver section(Ldr)*/
 NTSTATUS addACheatDrv(PDRIVER_OBJECT drv) {
 	auto status = STATUS_SUCCESS;
 
@@ -612,7 +603,7 @@ NTSTATUS addACheatDrv(PDRIVER_OBJECT drv) {
 			break;
 		}
 
-		//添加到全局维护的链表
+		//insert this driver to global list
 		auto suc=g_cheats_drvs.insert(kstd::move(entry), kstd::InsertType::tail);
 		if (!suc) {
 			LOG_DEBUG("failed to insert a drv cheat to list!\r\n");
@@ -627,7 +618,7 @@ NTSTATUS addACheatDrv(PDRIVER_OBJECT drv) {
 	return status;
 }
 
-//驱动卸载的时候,记得恢复,需要移除这个东西
+//when driver unload,call this funcitons,it will resume the driver's ldr(driver section)
 void removeACheatDrv(PDRIVER_OBJECT drv) {
 	DriverCheatEntry find;
 	find.new_ldr = nullptr;
@@ -640,27 +631,25 @@ void removeACheatDrv(PDRIVER_OBJECT drv) {
 	//LOG_INFO("current cheat drv size:%d\r\n", g_cheats_drvs.size());
 }
 
-//fakemodule模块销毁 一般是最后一个销毁的
+//fakemodule destory
 void fakeModuleDestory() {
-
 
 
 	g_cheats_drvs.destory(nullptr);
 	g_fake_modules.destory(nullptr);
 	g_hook_dispatcher.destory(nullptr);
-
 	destoryFakeLoadedModuleList();
 
 }
 
 
-//添加一个hook
-//目前是
+//add a functions hook
+//
 //mov rax,log func
 //call rax
 //mov rax,o_func
-//jmp o_func 所以如果要hook一个地方 只需要修改这个就行了
-NTSTATUS addAHook(void* target_addr/*要hook的函数地址*/, void* hook_addr) {
+//jmp o_func 
+NTSTATUS addAHook(void* target_addr/*the address which you want to hook*/, void* hook_addr) {
 	auto hook_module_base = (void*)0;
 	auto hook_module_name = getModuleNameByPtr((PVOID)target_addr, &hook_module_base);
 	FakeModuleEntry entry;
@@ -671,7 +660,7 @@ NTSTATUS addAHook(void* target_addr/*要hook的函数地址*/, void* hook_addr) {
 	}
 
 	auto rva = (ULONG_PTR)target_addr - (ULONG_PTR)hook_module_base;
-	rva += 14/*跳过前面的mov rax,call rax*/;
+	rva += 14/*skip the assblemy mov rax,call rax*/;
 
 	entry.org_base = (void*)hook_module_base;
 	auto fake_module = g_fake_modules.find(entry, [](const FakeModuleEntry& x, const FakeModuleEntry& y) {
@@ -687,7 +676,7 @@ NTSTATUS addAHook(void* target_addr/*要hook的函数地址*/, void* hook_addr) {
 	return STATUS_SUCCESS;
 }
 
-//本来是想采用PDB的,但是感觉也没啥必要,大部分人调用的还都是导出函数，如果未导出，记录一下rva现查就行了
+//we do not use pdb,so only record iat functions
 kstd::kstring getFuncNameFromExportByPtr(void* address) {
 	auto caller_base = (void*)0;
 	auto size = 0ull;
@@ -704,7 +693,6 @@ kstd::kstring getFuncNameFromExportByPtr(void* address) {
 	input_t tmp = { (ULONG)((ULONG_PTR)address - (ULONG_PTR)caller_base),{} };
 	kstd::ParsePE parse_pe(caller_base, size);
 
-	//遍历export table 然后对比rva,
 	parse_pe.enumrateExportTable(caller_base, [](char* name, int index, PSHORT ord_table, PULONG func_table, void* context) {
 		if (func_table[ord_table[index]] == ((input_t*)context)->rva) strcpy_s(((input_t*)context)->func_name, name);		
 	}, & tmp);
@@ -715,23 +703,26 @@ kstd::kstring getFuncNameFromExportByPtr(void* address) {
 
 }
 
-//汇编调用过来 是C语言的函数声明 负责找下一个要去执行的函数 也就是维护的全局kavl
-//会从kavl里面查找原始函数,如果没有,就记录一下,就返回
+//The assembly call is a function declaration in C language. 
+// It is responsible for finding the next function to be executed, which is the global kavl maintained.
+//The original function will be searched from kavl. If not, record it and return
 extern "C" void dispatcherFunc(PContext_t context) {
 	FakeModuleEntry entry;
 	auto rsp = reinterpret_cast<ULONG_PTR*>(context->mRsp);
 	auto caller_base = (void*)(0);
-	//context记录的堆栈目前是这样的
-	//|		  |
-	//|		  |
+	//The stack recorded by context currently looks like this
+	//| |
+	//| |
 	//|retadd2|<-conext.rsp
 	//|retadd1|
-	//retadd1 是 被欺骗的驱动调用iat的地址 直接引用即可;
-	//retadd2 是 假模块mov rax, call rax的地址,因此需要转换一下,其实就是[context.rsp]-12 才能得到函数头
+	//retadd1 is the address where the deceived driver calls iat, just quote it directly;
+	//retadd2 is the address of the fake module mov rax and call rax, so it needs to be converted. In fact, it is [context.rsp]-12 to get the function header.
+	
 	auto called_va = rsp[0] - 12;
 	auto caller_va = rsp[1];
 
-	//通过called_va 在g_fake_modules中查找
+
+	//Search in g_fake_modules through called_va
 	entry.org_base = (void*)called_va;
 
 	auto fake_module = g_fake_modules.find(entry, [](const FakeModuleEntry& x, const FakeModuleEntry& y) {
@@ -759,12 +750,11 @@ extern "C" void dispatcherFunc(PContext_t context) {
 		FLOG_ERROR("%p\tcalled unknow module:%p\r\n", caller_va, called_va);
 	}
 	else {
-		//计算出caller和called 的rva,以展示
+		
 		auto caller_rva = caller_va - (ULONG_PTR)caller_base;
 		auto called_rva = called_va - (ULONG_PTR)fake_module->fake_base;
 		auto& called_module_name = fake_module->base_name;
 
-		//真正该call的地方,而不是假模块的地址,这里计算出来
 		auto really_called_va = (ULONG_PTR)fake_module->org_base + called_rva;
 
 		auto called_func_name = getFuncNameFromExportByPtr((void*)(really_called_va));

@@ -2,7 +2,6 @@
 #ifndef _DM_UTILS_H_
 #define _DM_UTILS_H_
 
-//一些杂项的函数 
 
 NTSTATUS w2s(const wchar_t* src, char* dest, size_t destSize);
 NTSTATUS s2w(const char* src, wchar_t* dest, size_t destSize);

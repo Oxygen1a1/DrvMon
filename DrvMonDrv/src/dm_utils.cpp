@@ -7,16 +7,23 @@ void breakOnlyDebug() {
 
 }
 
-
+//sometimes there will occurs a bsod!?
 kstd::kwstring getModuleNameByPtr(PVOID p,PVOID* base,size_t* size) {
 	kstd::kwstring find_name{L"unknow module"};
 	ULONG needSize = 0;
 	ZwQuerySystemInformation(SystemModuleInformation, nullptr, 0, &needSize);
 	needSize += PAGE_SIZE;
+	wchar_t* wstr = nullptr;
 
-	auto info = reinterpret_cast<SYSTEM_MODULE_INFORMATION*>(ExAllocatePoolWithTag(NonPagedPool, needSize, 'temp'));
+	const auto info = reinterpret_cast<SYSTEM_MODULE_INFORMATION*>(ExAllocatePoolWithTag(NonPagedPool, needSize, 'temp'));
 	if (!MmIsAddressValid(info)) {
 		LOG_ERROR("failed to alloa memory for sys infomation!\r\n");
+		return find_name;
+	}
+
+	wstr = reinterpret_cast<wchar_t*>(ExAllocatePoolWithTag(NonPagedPool, 512*2, 'temp'));
+	if (!MmIsAddressValid(wstr)) {
+		LOG_ERROR("failed to alloa memory for str\r\n");
 		return find_name;
 	}
 
@@ -28,15 +35,18 @@ kstd::kwstring getModuleNameByPtr(PVOID p,PVOID* base,size_t* size) {
 		}
 
 		for (size_t i = 0; i < info->Count; i++) {
-			SYSTEM_MODULE_ENTRY* module_entry = &info->Module[i];
+			SYSTEM_MODULE_ENTRY* module_entry = &(info->Module[i]);
 		
 			if ((ULONG_PTR)module_entry->BaseAddress <= (ULONG_PTR)(p) &&
 				(UINT_PTR)module_entry->BaseAddress + module_entry->Size >= (ULONG_PTR)(p)) {
-				wchar_t w_tmp[512]{};
-				s2w(module_entry->Name, w_tmp, sizeof w_tmp / sizeof wchar_t);
-				find_name = w_tmp;
+				
+
+				s2w(module_entry->Name, wstr, 512);
+				find_name = wstr;
+
 				if (MmIsAddressValid(size)) *size = module_entry->Size;
 				if (MmIsAddressValid(base)) *base = module_entry->BaseAddress;
+
 				break;
 			}
 		}
@@ -46,6 +56,8 @@ kstd::kwstring getModuleNameByPtr(PVOID p,PVOID* base,size_t* size) {
 	//clean up
 	if(MmIsAddressValid(info))
 		ExFreePool(info);
+	if (MmIsAddressValid(wstr))
+		ExFreePool(wstr);
 	return find_name;
 }
 
@@ -59,13 +71,13 @@ NTSTATUS w2s(const wchar_t* src, char* dest, size_t destSize) {
 	size_t i = 0;
 	while (src[i] != L'\0' && i < destSize - 1)
 	{
-		if (src[i] <= 0x7F) // ASCII字符
+		if (src[i] <= 0x7F) 
 		{
 			dest[i] = (char)src[i];
 		}
 		else
 		{
-			// 如果遇到非ASCII字符，可以将其替换为'?'或其他占位符
+			
 			dest[i] = '?';
 		}
 		++i;
@@ -86,13 +98,13 @@ NTSTATUS s2w(const char* src, wchar_t* dest, size_t destSize) {
 	size_t i = 0;
 	while (src[i] != '\0' && i < destSize - 1)
 	{
-		if (src[i] >= 0) // ASCII字符
+		if (src[i] >= 0) 
 		{
 			dest[i] = (wchar_t)src[i];
 		}
 		else
 		{
-			// 如果遇到非ASCII字符，可以将其替换为L'?'或其他占位符
+			
 			dest[i] = L'?';
 		}
 		++i;
@@ -152,10 +164,10 @@ auto find_module_base(const wchar_t* w_module_name, ULONG* size) -> void* {
 	return findBase;
 }
 
-
+//Force copy across pages 
 bool _memcpy(PVOID address, PVOID target_address, ULONG length)
 {
-	//处理跨物理页问题
+	
 	auto skipPhyPages = ((((UINT_PTR)(address)+length) >> PAGE_SHIFT) - ((UINT_PTR)address >> PAGE_SHIFT));
 
 	if (!skipPhyPages) {
@@ -176,7 +188,7 @@ bool _memcpy(PVOID address, PVOID target_address, ULONG length)
 	}
 	else {// 0x200 0x2900 3100 800 1000 
 		auto firstPageCopy = PAGE_SIZE - (UINT_PTR)address & 0xfff;
-		//需要处理跨页问题
+		
 		for (int i = 0; i <= skipPhyPages; i++) {
 			if (i == 0) {
 				PHYSICAL_ADDRESS physicial_address;
@@ -190,7 +202,7 @@ bool _memcpy(PVOID address, PVOID target_address, ULONG length)
 						MmUnmapIoSpace(maped_mem, firstPageCopy);
 					}
 				}
-				else return false;//没复制成功
+				else return false;
 			}
 			else if (i == skipPhyPages) {
 				auto lastPageCopy = length - PAGE_SIZE * (i - 1) - firstPageCopy;
@@ -207,7 +219,7 @@ bool _memcpy(PVOID address, PVOID target_address, ULONG length)
 						MmUnmapIoSpace(maped_mem, lastPageCopy);
 					}
 				}
-				else return false;//没复制成功
+				else return false;
 
 			}
 			else {
@@ -223,7 +235,7 @@ bool _memcpy(PVOID address, PVOID target_address, ULONG length)
 						MmUnmapIoSpace(maped_mem, PAGE_SIZE);
 					}
 				}
-				else return false;//没复制成功
+				else return false;
 
 			}
 		}
