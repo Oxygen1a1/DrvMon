@@ -9,8 +9,7 @@
 //replace fake function ptr to cheat driver
 auto hkMmGetSystemRoutineAddress(PUNICODE_STRING funcName)->void* {
 	auto ret = MmGetSystemRoutineAddress(funcName);
-	auto f_nt_ldr = findFakeLoadedModuleList(L"ntoskrnl.exe");
-	auto f_hal_ldr = findFakeLoadedModuleList(L"HAL.dll");
+
 	breakOnlyDebug();
 
 	auto nt_size = 0ul,hal_size=0ul;
@@ -18,13 +17,16 @@ auto hkMmGetSystemRoutineAddress(PUNICODE_STRING funcName)->void* {
 	auto nt_base=find_module_base(L"ntoskrnl.exe", &nt_size);
 	auto hal_base = find_module_base(L"HAL.dll", &hal_size);
 
-	if (nt_base <= ret && (void*)((ULONG_PTR)nt_base + nt_size) >= ret) {
+	auto f_nt_ldr = findFakeLoadedModuleList(nt_base);
+	auto f_hal_ldr = findFakeLoadedModuleList(hal_base);
+
+	if (nt_base <= ret && (void*)((ULONG_PTR)nt_base + nt_size) >= ret && f_nt_ldr) {
 
 		ret = (void*)((ULONG_PTR)ret - (ULONG_PTR)nt_base + (ULONG_PTR)f_nt_ldr->DllBase);
 
 	}
 
-	if (hal_base <= ret && (void*)((ULONG_PTR)hal_base + hal_size) >= ret) {
+	if (hal_base <= ret && (void*)((ULONG_PTR)hal_base + hal_size) >= ret && f_hal_ldr) {
 
 		ret = (void*)((ULONG_PTR)ret - (ULONG_PTR)hal_base + (ULONG_PTR)f_hal_ldr->DllBase);
 
